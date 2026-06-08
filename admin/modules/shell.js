@@ -137,7 +137,6 @@ export function createShellModule({ app, state, getSupabase }) {
       <main class="page">
         <section class="page-header">
           <div class="page-title">
-            <span class="eyebrow">${escapeHtml(labels[section] || "Admin")}</span>
             <h1>Módulo em preparação</h1>
             <p class="section-subtitle">A navegação e o banco já estão reservados para esta área.</p>
           </div>

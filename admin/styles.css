@@ -2394,7 +2394,7 @@ h1 {
 
 .data-table th:last-child,
 .data-table td:last-child {
-  background: rgba(17, 8, 28, 0.96);
+  background: var(--panel-solid, #160629);
   box-shadow: -12px 0 20px rgba(0, 0, 0, 0.26);
   position: sticky;
   right: 0;
@@ -2406,6 +2406,18 @@ h1 {
 
 .data-table td:last-child {
   z-index: 1;
+}
+
+.data-table tbody tr {
+  transition: background-color 160ms ease;
+}
+
+.data-table tr:hover td {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.data-table tr:hover td:last-child {
+  background-color: #1f0f35;
 }
 
 .data-table td strong {

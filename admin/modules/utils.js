@@ -210,3 +210,68 @@ function parseDecimalInput(rawValue, label, errors) {
   }
   return number;
 }
+
+export function formatPhone(value) {
+  if (!value) return "";
+  let digits = value.replace(/\D/g, "");
+  
+  let ddi = "";
+  if (value.trim().startsWith("+")) {
+    const rawClean = value.replace(/[^\d+]/g, "");
+    const plusMatch = rawClean.match(/^\+(\d{1,3})/);
+    if (plusMatch) {
+      ddi = `+${plusMatch[1]} `;
+      digits = rawClean.slice(plusMatch[0].length);
+    }
+  } else if ((digits.length === 12 || digits.length === 13) && digits.startsWith("55")) {
+    ddi = "+55 ";
+    digits = digits.slice(2);
+  }
+
+  if (digits.length > 10) {
+    return `${ddi}(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7, 11)}`;
+  } else if (digits.length > 6) {
+    return `${ddi}(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6, 10)}`;
+  } else if (digits.length > 2) {
+    return `${ddi}(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+  } else if (digits.length > 0) {
+    return `${ddi}(${digits.slice(0, 2)}`;
+  }
+  return ddi ? ddi.trim() : "";
+}
+
+export function formatCPF_CNPJ(value) {
+  if (!value) return "";
+  const digits = value.replace(/\D/g, "");
+  if (digits.length <= 11) {
+    if (digits.length > 9) {
+      return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9, 11)}`;
+    } else if (digits.length > 6) {
+      return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}`;
+    } else if (digits.length > 3) {
+      return `${digits.slice(0, 3)}.${digits.slice(3, 6)}`;
+    }
+    return digits;
+  } else {
+    const truncated = digits.slice(0, 14);
+    if (truncated.length > 12) {
+      return `${truncated.slice(0, 2)}.${truncated.slice(2, 5)}.${truncated.slice(5, 8)}/${truncated.slice(8, 12)}-${truncated.slice(12, 14)}`;
+    } else if (truncated.length > 8) {
+      return `${truncated.slice(0, 2)}.${truncated.slice(2, 5)}.${truncated.slice(5, 8)}/${truncated.slice(8, 12)}`;
+    } else if (truncated.length > 5) {
+      return `${truncated.slice(0, 2)}.${truncated.slice(2, 5)}.${truncated.slice(5, 8)}`;
+    } else if (truncated.length > 2) {
+      return `${truncated.slice(0, 2)}.${truncated.slice(2, 5)}`;
+    }
+    return truncated;
+  }
+}
+
+export function formatCEP(value) {
+  if (!value) return "";
+  const digits = value.replace(/\D/g, "").slice(0, 8);
+  if (digits.length > 5) {
+    return `${digits.slice(0, 5)}-${digits.slice(5)}`;
+  }
+  return digits;
+}

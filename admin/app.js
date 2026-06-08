@@ -3,6 +3,7 @@ import { createMetricsModule } from "./modules/metrics.js?v=3";
 import { createApiModule } from "./modules/api.js?v=7";
 import { createShellModule } from "./modules/shell.js?v=10";
 import { createCasesModule } from "./modules/cases.js?v=6";
+import { formatPhone, formatCPF_CNPJ, formatCEP } from "./modules/utils.js?v=3";
 
 const app = document.querySelector("#app");
 const supabaseConfig = window.RAKSA_SUPABASE || {};
@@ -360,6 +361,40 @@ document.addEventListener("submit", async (event) => {
 });
 
 document.addEventListener("input", (event) => {
+  const target = event.target;
+  if (target.matches('input[name="phone"]')) {
+    const start = target.selectionStart;
+    const oldVal = target.value;
+    const newVal = formatPhone(oldVal);
+    if (newVal !== oldVal) {
+      target.value = newVal;
+      const offset = newVal.length - oldVal.length;
+      target.setSelectionRange(start + offset, start + offset);
+    }
+  }
+
+  if (target.matches('input[name="document"]')) {
+    const start = target.selectionStart;
+    const oldVal = target.value;
+    const newVal = formatCPF_CNPJ(oldVal);
+    if (newVal !== oldVal) {
+      target.value = newVal;
+      const offset = newVal.length - oldVal.length;
+      target.setSelectionRange(start + offset, start + offset);
+    }
+  }
+
+  if (target.matches('input[name="postal_code"]') || target.matches('input[name="billing_postal_code"]')) {
+    const start = target.selectionStart;
+    const oldVal = target.value;
+    const newVal = formatCEP(oldVal);
+    if (newVal !== oldVal) {
+      target.value = newVal;
+      const offset = newVal.length - oldVal.length;
+      target.setSelectionRange(start + offset, start + offset);
+    }
+  }
+
   if (event.target.matches("[data-search]")) {
     updateDashboardSearch(event.target.value);
   }
@@ -481,6 +516,24 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  if (event.target.matches("[data-client-type-select]")) {
+    const val = event.target.value;
+    const taxFields = event.target.form.querySelectorAll("[data-tax-fields]");
+    taxFields.forEach((el) => {
+      el.style.display = val === "person" ? "none" : "";
+    });
+    return;
+  }
+
+  if (event.target.matches("[data-billing-same-toggle]")) {
+    const checked = event.target.checked;
+    const billingFields = event.target.form.querySelector("[data-billing-address-fields]");
+    if (billingFields) {
+      billingFields.style.display = checked ? "none" : "";
+    }
+    return;
+  }
+
   const budgetClientSelect = event.target.closest("[data-budget-client-select]");
   if (budgetClientSelect) {
     syncBudgetContactOptions(budgetClientSelect);

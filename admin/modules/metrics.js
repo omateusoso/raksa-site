@@ -15,7 +15,6 @@ export function createMetricsModule({ state, renderShell, renderCrmNotice }) {
       <main class="page">
         <section class="page-header">
           <div class="page-title">
-            <span class="eyebrow">Métricas</span>
             <h1>Eventos do site</h1>
             <p class="section-subtitle">${state.metricsEvents.length} eventos recentes carregados</p>
           </div>

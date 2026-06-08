@@ -91,7 +91,6 @@ export function createCasesModule({
       <main class="page cms-page">
         <section class="page-header cms-header">
           <div class="page-title">
-            <span class="eyebrow">CMS</span>
             <h1>Posts</h1>
             <p class="section-subtitle">${state.cases.length} posts cadastrados no portfolio</p>
           </div>
@@ -283,7 +282,6 @@ export function createCasesModule({
       <main class="page editor-page">
         <section class="page-header">
           <div class="page-title">
-            <span class="eyebrow">Editar case</span>
             <h1>${escapeHtml(item.title || "Novo case")}</h1>
             <p class="section-subtitle">/${escapeHtml(item.slug)}</p>
           </div>
@@ -446,7 +444,6 @@ export function createCasesModule({
       <main class="page home-settings-page">
         <section class="page-header">
           <div class="page-title">
-            <span class="eyebrow">Página inicial</span>
             <h1>Cases em destaque</h1>
             <p class="section-subtitle">${selected.length} cases selecionados para a landing page</p>
           </div>

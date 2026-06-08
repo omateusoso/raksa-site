@@ -107,7 +107,6 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
         ${renderCrmNotice()}
         <section class="platform-start-panel">
           <div>
-            <span class="eyebrow">RAKSA</span>
             <h1>Página inicial</h1>
           </div>
         </section>
@@ -287,7 +286,6 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       <main class="page crm-page">
         <section class="page-header">
           <div class="page-title">
-            <span class="eyebrow">${escapeHtml(eyebrow)}</span>
             <h1>${escapeHtml(title)}</h1>
             <p class="section-subtitle">${escapeHtml(subtitle)}</p>
           </div>
@@ -325,7 +323,6 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             <tr>
               <th>Cliente</th>
               <th>Contato</th>
-              <th>Origem</th>
               <th>Pessoas</th>
               <th>Status</th>
               <th>Atualizado</th>
@@ -347,10 +344,6 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                     <span>${escapeHtml(primaryContact?.email || primaryContact?.phone || client.website || client.document || "")}</span>
                   </td>
                   <td>
-                    <strong>${escapeHtml(client.referral_source || "-")}</strong>
-                    <span>${Number(client.commission_rate || 0) ? `${formatPercent(client.commission_rate)} comissão` : ""}</span>
-                  </td>
-                  <td>
                     <strong>${contacts.length}</strong>
                     <span>${contacts.length === 1 ? "contato cadastrado" : "contatos cadastrados"}</span>
                   </td>
@@ -359,7 +352,6 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <td>
                     <div class="row-actions">
                       <button class="icon-button" type="button" data-view-client="${escapeHtml(client.id)}">Detalhes</button>
-                      <button class="icon-button" type="button" data-open-contact-modal="${escapeHtml(client.id)}">Contato</button>
                       <button class="icon-button" type="button" data-open-client-modal="${escapeHtml(client.id)}">Editar</button>
                       <button class="icon-button" type="button" data-delete-crm="clients:${escapeHtml(client.id)}">Excluir</button>
                     </div>
@@ -385,60 +377,172 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
         <form class="modal modal-wide form-stack crm-editor-form" data-client-form ${crmFormAttrs("clients")}>
           <div class="modal-header">
             <div>
-              <span class="eyebrow">Cliente</span>
               <h2>${client ? "Editar cliente" : "Novo cliente"}</h2>
             </div>
             <button class="icon-button" type="button" data-close-modal>Fechar</button>
           </div>
-          <div class="crm-form-grid">
-            <label class="field field-span-2">
-              <span>Nome</span>
-              <input class="input" name="name" value="${valueAttr(client?.name)}" required>
-            </label>
-            <label class="field">
-              <span>Tipo</span>
-              <select class="select" name="type">${selectOptions(CLIENT_TYPES, client?.type || "company")}</select>
-            </label>
-            <label class="field">
-              <span>Status</span>
-              <select class="select" name="status">${selectOptions(CLIENT_STATUSES, client?.status || "active")}</select>
-            </label>
-            <label class="field">
-              <span>E-mail</span>
-              <input class="input" name="email" type="email" value="${valueAttr(client?.email)}">
-            </label>
-            <label class="field">
-              <span>E-mail de cobrança</span>
-              <input class="input" name="billing_email" type="email" value="${valueAttr(client?.billing_email)}">
-            </label>
-            <label class="field">
-              <span>Telefone</span>
-              <input class="input" name="phone" value="${valueAttr(client?.phone)}">
-            </label>
-            <label class="field">
-              <span>Documento</span>
-              <input class="input" name="document" value="${valueAttr(client?.document)}">
-            </label>
-            <label class="field">
-              <span>Website</span>
-              <input class="input" name="website" type="text" inputmode="url" value="${valueAttr(client?.website)}" placeholder="raksa.com.br">
-            </label>
-            <label class="field">
-              <span>Origem / indicação</span>
-              <input class="input" name="referral_source" value="${valueAttr(client?.referral_source)}" placeholder="Agência, parceiro ou indicação">
-            </label>
-            <label class="field">
-              <span>Comissão (%)</span>
-              <input class="input" name="commission_rate" type="number" min="0" max="100" step="0.01" value="${valueAttr(client?.commission_rate ?? "")}">
-            </label>
-            <label class="field field-span-4">
-              <span>Endereço</span>
-              <input class="input" name="address" value="${valueAttr(client?.address)}" placeholder="Endereço comercial ou fiscal">
-            </label>
-            <label class="field field-span-4">
-              <span>Notas</span>
-              <textarea class="textarea textarea-small" name="notes">${escapeHtml(client?.notes || "")}</textarea>
-            </label>
+          
+          <div class="crm-form-sections" style="display: grid; gap: 24px; max-height: calc(100vh - 200px); overflow-y: auto; padding-right: 8px;">
+            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
+              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Dados comerciais</legend>
+              <div class="crm-form-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Nome</span>
+                  <input class="input" name="name" value="${valueAttr(client?.name)}" required>
+                </label>
+                <label class="field">
+                  <span>Tipo de cliente</span>
+                  <select class="select" name="type" data-client-type-select>
+                    <option value="company" ${client?.type === "company" || !client ? "selected" : ""}>Pessoa Jurídica</option>
+                    <option value="person" ${client?.type === "person" ? "selected" : ""}>Pessoa Física</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>Status</span>
+                  <select class="select" name="status">${selectOptions(CLIENT_STATUSES, client?.status || "active")}</select>
+                </label>
+                <label class="field" style="grid-column: span 2;">
+                  <span>Documento (CPF / CNPJ)</span>
+                  <input class="input" name="document" value="${valueAttr(client?.document)}" placeholder="00.000.000/0000-00">
+                </label>
+                <label class="field" data-tax-fields style="grid-column: span 1; ${client?.type === "person" ? "display: none;" : ""}">
+                  <span>Inscrição Estadual</span>
+                  <input class="input" name="state_registration" value="${valueAttr(client?.state_registration)}">
+                </label>
+                <label class="field" data-tax-fields style="grid-column: span 1; ${client?.type === "person" ? "display: none;" : ""}">
+                  <span>Inscrição Municipal</span>
+                  <input class="input" name="municipal_registration" value="${valueAttr(client?.municipal_registration)}">
+                </label>
+                <label class="field" style="grid-column: span 2;">
+                  <span>Indicação</span>
+                  <select class="select" name="referral_source">
+                    <option value="">Sem indicação</option>
+                    ${state.clients
+                      .filter(c => c.id !== client?.id)
+                      .map(c => `<option value="${escapeHtml(c.id)}" ${client?.referral_source === c.id || client?.referral_source === c.name ? "selected" : ""}>${escapeHtml(c.name)}</option>`)
+                      .join("")}
+                  </select>
+                </label>
+                <label class="field" style="grid-column: span 2;">
+                  <span>Comissão (%)</span>
+                  <input class="input" name="commission_rate" type="number" min="0" max="100" step="0.01" value="${valueAttr(client?.commission_rate ?? "")}">
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
+              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Dados de contato</legend>
+              <div class="crm-form-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>E-mail principal</span>
+                  <input class="input" name="email" type="email" value="${valueAttr(client?.email)}">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>E-mail de cobrança</span>
+                  <input class="input" name="billing_email" type="email" value="${valueAttr(client?.billing_email)}">
+                </label>
+                <label class="field" style="grid-column: span 2;">
+                  <span>Telefone</span>
+                  <input class="input" name="phone" value="${valueAttr(client?.phone)}" placeholder="(00) 00000-0000">
+                </label>
+                <label class="field" style="grid-column: span 2;">
+                  <span>Website</span>
+                  <input class="input" name="website" type="text" inputmode="url" value="${valueAttr(client?.website)}" placeholder="raksa.com.br">
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
+              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Endereço Comercial</legend>
+              <div class="crm-form-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                <label class="field">
+                  <span>CEP</span>
+                  <input class="input" name="postal_code" value="${valueAttr(client?.postal_code)}" placeholder="00000-000">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Rua</span>
+                  <input class="input" name="street" value="${valueAttr(client?.street)}">
+                </label>
+                <label class="field">
+                  <span>Número</span>
+                  <input class="input" name="number" value="${valueAttr(client?.number)}">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Complemento</span>
+                  <input class="input" name="complement" value="${valueAttr(client?.complement)}">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Bairro</span>
+                  <input class="input" name="neighborhood" value="${valueAttr(client?.neighborhood)}">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Cidade</span>
+                  <input class="input" name="city" value="${valueAttr(client?.city)}">
+                </label>
+                <label class="field">
+                  <span>Estado</span>
+                  <input class="input" name="state" value="${valueAttr(client?.state)}">
+                </label>
+                <label class="field">
+                  <span>País</span>
+                  <input class="input" name="country" value="${valueAttr(client?.country || "Brasil")}">
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
+              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Endereço de Faturamento</legend>
+              <div style="margin-bottom: 16px;">
+                <label class="toggle-row">
+                  <input type="checkbox" name="billing_same_as_commercial" data-billing-same-toggle ${client?.billing_same_as_commercial !== false ? "checked" : ""}>
+                  <span>Mesmo do comercial</span>
+                </label>
+              </div>
+              <div class="crm-form-grid" data-billing-address-fields style="display: ${client?.billing_same_as_commercial !== false ? "none" : "grid"}; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                <label class="field">
+                  <span>CEP</span>
+                  <input class="input" name="billing_postal_code" value="${valueAttr(client?.billing_postal_code)}" placeholder="00000-000">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Rua</span>
+                  <input class="input" name="billing_street" value="${valueAttr(client?.billing_street)}">
+                </label>
+                <label class="field">
+                  <span>Número</span>
+                  <input class="input" name="billing_number" value="${valueAttr(client?.billing_number)}">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Complemento</span>
+                  <input class="input" name="billing_complement" value="${valueAttr(client?.billing_complement)}">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Bairro</span>
+                  <input class="input" name="billing_neighborhood" value="${valueAttr(client?.billing_neighborhood)}">
+                </label>
+                <label class="field field-span-2" style="grid-column: span 2;">
+                  <span>Cidade</span>
+                  <input class="input" name="billing_city" value="${valueAttr(client?.billing_city)}">
+                </label>
+                <label class="field">
+                  <span>Estado</span>
+                  <input class="input" name="billing_state" value="${valueAttr(client?.billing_state)}">
+                </label>
+                <label class="field">
+                  <span>País</span>
+                  <input class="input" name="billing_country" value="${valueAttr(client?.billing_country || "Brasil")}">
+                </label>
+              </div>
+            </fieldset>
+
+            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
+              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Notas</legend>
+              <div class="crm-form-grid" style="display: grid; grid-template-columns: 1fr; gap: 16px;">
+                <label class="field field-span-4" style="grid-column: span 1;">
+                  <span>Notas sobre o cliente</span>
+                  <textarea class="textarea textarea-small" name="notes">${escapeHtml(client?.notes || "")}</textarea>
+                </label>
+              </div>
+            </fieldset>
           </div>
           ${renderCrmFormActions("clients", client, "Criar cliente", "Salvar cliente")}
         </form>
@@ -456,27 +560,13 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
 
   function renderClientDetailsModal(client) {
     const contacts = clientContacts(client.id);
-    const detailRows = [
-      ["Tipo", labelFromOptions(CLIENT_TYPES, client.type)],
-      ["Status", labelFromOptions(CLIENT_STATUSES, client.status)],
-      ["E-mail", client.email || "-"],
-      ["E-mail de cobrança", client.billing_email || "-"],
-      ["Telefone", client.phone || "-"],
-      ["Documento", client.document || "-"],
-      ["Website", client.website || "-"],
-      ["Origem / indicação", client.referral_source || "-"],
-      ["Comissão", Number(client.commission_rate || 0) ? `${formatPercent(client.commission_rate)} comissão` : "-"],
-      ["Endereço", client.address || "-"],
-      ["Atualizado", formatDate(client.updated_at || client.created_at)],
-      ["Notas", client.notes || "-"],
-    ];
-
+    const referralName = state.clients.find((c) => c.id === client.referral_source)?.name || client.referral_source || "-";
+    
     return `
       <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="Detalhes do cliente">
         <div class="modal modal-wide form-stack">
           <div class="modal-header">
             <div>
-              <span class="eyebrow">Cliente</span>
               <h2>${escapeHtml(client.name)}</h2>
             </div>
             <div class="modal-actions">
@@ -485,28 +575,141 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
               <button class="icon-button" type="button" data-close-modal>Fechar</button>
             </div>
           </div>
-          <section class="detail-grid">
-            ${detailRows.map(([label, value]) => `
-              <div class="detail-item">
-                <span>${escapeHtml(label)}</span>
-                <strong>${escapeHtml(value)}</strong>
+          
+          <div class="crm-details-sections" style="display: grid; gap: 24px;">
+            <section class="details-section panel" style="padding: 16px;">
+              <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--accent); font-weight: 700;">Dados comerciais</h3>
+              <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">Tipo</span>
+                  <strong>${client.type === "person" ? "Pessoa Física" : "Pessoa Jurídica"}</strong>
+                </div>
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">Status</span>
+                  <strong>${labelFromOptions(CLIENT_STATUSES, client.status)}</strong>
+                </div>
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">Documento</span>
+                  <strong>${client.document || "-"}</strong>
+                </div>
+                ${client.type !== "person" ? `
+                  <div class="detail-item">
+                    <span style="font-size: 12px; color: var(--subtle); display: block;">Inscrição Estadual</span>
+                    <strong>${client.state_registration || "-"}</strong>
+                  </div>
+                  <div class="detail-item">
+                    <span style="font-size: 12px; color: var(--subtle); display: block;">Inscrição Municipal</span>
+                    <strong>${client.municipal_registration || "-"}</strong>
+                  </div>
+                ` : ""}
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">Indicação</span>
+                  <strong>${escapeHtml(referralName)}</strong>
+                </div>
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">Comissão</span>
+                  <strong>${Number(client.commission_rate || 0) ? `${formatPercent(client.commission_rate)} comissão` : "-"}</strong>
+                </div>
               </div>
-            `).join("")}
+            </section>
+
+            <section class="details-section panel" style="padding: 16px;">
+              <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--accent); font-weight: 700;">Dados de contato</h3>
+              <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">E-mail</span>
+                  <strong>${client.email || "-"}</strong>
+                </div>
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">E-mail de cobrança</span>
+                  <strong>${client.billing_email || "-"}</strong>
+                </div>
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">Telefone</span>
+                  <strong>${client.phone || "-"}</strong>
+                </div>
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block;">Website</span>
+                  <strong>${client.website || "-"}</strong>
+                </div>
+              </div>
+            </section>
+
+            <section class="details-section panel" style="padding: 16px;">
+              <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--accent); font-weight: 700;">Endereço</h3>
+              <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block; margin-bottom: 4px;">Endereço Comercial</span>
+                  <strong>
+                    ${client.street ? `
+                      ${escapeHtml(client.street)}, ${escapeHtml(client.number || "s/n")}
+                      ${client.complement ? ` - ${escapeHtml(client.complement)}` : ""}
+                      <br>${escapeHtml(client.neighborhood || "")}
+                      <br>${escapeHtml(client.city || "")} - ${escapeHtml(client.state || "")}
+                      <br>CEP ${escapeHtml(client.postal_code || "")}
+                      ${client.country && client.country !== "Brasil" ? `<br>${escapeHtml(client.country)}` : ""}
+                    ` : (client.address || "-")}
+                  </strong>
+                </div>
+                <div class="detail-item">
+                  <span style="font-size: 12px; color: var(--subtle); display: block; margin-bottom: 4px;">Endereço de Faturamento</span>
+                  <strong>
+                    ${client.billing_same_as_commercial !== false ? "Mesmo do comercial" : `
+                      ${client.billing_street ? `
+                        ${escapeHtml(client.billing_street)}, ${escapeHtml(client.billing_number || "s/n")}
+                        ${client.billing_complement ? ` - ${escapeHtml(client.billing_complement)}` : ""}
+                        <br>${escapeHtml(client.billing_neighborhood || "")}
+                        <br>${escapeHtml(client.billing_city || "")} - ${escapeHtml(client.billing_state || "")}
+                        <br>CEP ${escapeHtml(client.billing_postal_code || "")}
+                        ${client.billing_country && client.billing_country !== "Brasil" ? `<br>${escapeHtml(client.billing_country)}` : ""}
+                      ` : "-"}
+                    `}
+                  </strong>
+                </div>
+              </div>
+            </section>
+          </div>
+
+          <section class="notes-section panel" style="padding: 16px; background: rgba(255, 255, 255, 0.02);">
+            <h3 style="font-size: 16px; margin-bottom: 8px; color: var(--accent); font-weight: 700;">Notas sobre o cliente</h3>
+            <p style="color: var(--muted); margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.5;">${escapeHtml(client.notes) || "Nenhuma nota cadastrada."}</p>
           </section>
+
           <section class="budget-section">
             <div class="budget-section-heading">
-              <strong>Contatos</strong>
+              <strong>Pessoas de contato</strong>
               <span>${contacts.length ? `${contacts.length} pessoa${contacts.length === 1 ? "" : "s"} vinculada${contacts.length === 1 ? "" : "s"}` : "Nenhum contato cadastrado"}</span>
             </div>
             ${contacts.length ? `
-              <div class="compact-list">
-                ${contacts.map((contact) => `
-                  <div class="compact-row">
-                    <span>${escapeHtml(contact.name)}${contact.role ? ` · ${escapeHtml(contact.role)}` : ""}</span>
-                    <strong>${escapeHtml(contact.email || contact.phone || "-")}</strong>
-                    <button class="icon-button" type="button" data-open-contact-modal="${escapeHtml(client.id)}" data-contact-id="${escapeHtml(contact.id)}">Editar</button>
-                  </div>
-                `).join("")}
+              <div class="table-wrap" style="margin-top: 10px;">
+                <table class="data-table">
+                  <thead>
+                    <tr>
+                      <th>Nome do contato</th>
+                      <th>E-mail</th>
+                      <th>Celular</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${contacts.map((contact) => `
+                      <tr>
+                        <td>
+                          <strong>${escapeHtml(contact.name)}</strong>
+                          <span>${escapeHtml(contact.role || "")}</span>
+                        </td>
+                        <td>${escapeHtml(contact.email || "-")}</td>
+                        <td>${escapeHtml(contact.phone || "-")}</td>
+                        <td>
+                          <div class="row-actions">
+                            <button class="icon-button" type="button" data-open-contact-modal="${escapeHtml(client.id)}" data-contact-id="${escapeHtml(contact.id)}">Editar</button>
+                            <button class="icon-button" type="button" data-delete-crm="contacts:${escapeHtml(contact.id)}">Excluir</button>
+                          </div>
+                        </td>
+                      </tr>
+                    `).join("")}
+                  </tbody>
+                </table>
               </div>` : `<div class="empty-state compact-empty">Nenhum contato cadastrado.</div>`}
           </section>
         </div>
@@ -3555,6 +3758,27 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const editing = crmEditRecord("clients");
     const data = new FormData(form);
     const errors = [];
+    
+    const postal_code = textFromForm(data, "postal_code");
+    const street = textFromForm(data, "street");
+    const number = textFromForm(data, "number");
+    const complement = textFromForm(data, "complement");
+    const neighborhood = textFromForm(data, "neighborhood");
+    const city = textFromForm(data, "city");
+    const stateVal = textFromForm(data, "state");
+    const country = textFromForm(data, "country");
+    
+    // Assemble the full address string for backwards compatibility
+    let address = "";
+    if (street) {
+      address = `${street}, ${number || "s/n"}`;
+      if (complement) address += ` - ${complement}`;
+      if (neighborhood) address += `, ${neighborhood}`;
+      if (city) address += `, ${city} - ${stateVal || ""}`;
+      if (postal_code) address += `, CEP ${postal_code}`;
+      if (country && country !== "Brasil") address += ` · ${country}`;
+    }
+
     const payload = {
       name: requiredTextFromForm(data, "name", "o nome do cliente", errors),
       type: String(data.get("type") || "company"),
@@ -3566,8 +3790,28 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       website: optionalUrlFromForm(data, "website", "Website", errors),
       referral_source: textFromForm(data, "referral_source"),
       commission_rate: boundedPercentFromForm(data, "commission_rate", "Comissão", errors),
-      address: textFromForm(data, "address"),
+      address: address || textFromForm(data, "address"),
       notes: String(data.get("notes") || "").trim(),
+      
+      state_registration: textFromForm(data, "state_registration"),
+      municipal_registration: textFromForm(data, "municipal_registration"),
+      postal_code,
+      street,
+      number,
+      complement,
+      neighborhood,
+      city,
+      state: stateVal,
+      country,
+      billing_postal_code: textFromForm(data, "billing_postal_code"),
+      billing_street: textFromForm(data, "billing_street"),
+      billing_number: textFromForm(data, "billing_number"),
+      billing_complement: textFromForm(data, "billing_complement"),
+      billing_neighborhood: textFromForm(data, "billing_neighborhood"),
+      billing_city: textFromForm(data, "billing_city"),
+      billing_state: textFromForm(data, "billing_state"),
+      billing_country: textFromForm(data, "billing_country"),
+      billing_same_as_commercial: data.get("billing_same_as_commercial") === "on",
     };
     if (!validateCrmPayload("clients", errors)) return;
 
