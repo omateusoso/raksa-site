@@ -1,0 +1,16 @@
+{
+  "name": "raksadesign-site",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "start": "node scripts/serve.mjs",
+    "check": "node scripts/check-assets.mjs",
+    "audit:framer": "node scripts/audit-framer-links.mjs",
+    "sync:framer-covers": "node scripts/sync-framer-case-covers.mjs",
+    "sync:cases-json": "node scripts/sync-supabase-cases-json.mjs",
+    "generate:admin-cases": "node scripts/generate-admin-cases.mjs",
+    "verify": "npm run check && npm run audit:framer"
+  }
+}

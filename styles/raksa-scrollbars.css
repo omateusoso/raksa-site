@@ -1,0 +1,61 @@
+:root {
+  --raksa-scrollbar-track: rgba(255, 255, 255, 0.035);
+  --raksa-scrollbar-page-track: #0b0312;
+  --raksa-scrollbar-thumb: rgba(255, 255, 255, 0.2);
+  --raksa-scrollbar-thumb-hover: rgba(139, 81, 255, 0.58);
+}
+
+html,
+body,
+#main,
+#main * {
+  scrollbar-color: var(--raksa-scrollbar-thumb) var(--raksa-scrollbar-track);
+  scrollbar-width: thin;
+}
+
+html,
+body {
+  scrollbar-color: var(--raksa-scrollbar-thumb) var(--raksa-scrollbar-page-track);
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar,
+#main::-webkit-scrollbar,
+#main *::-webkit-scrollbar {
+  height: 8px;
+  width: 8px;
+}
+
+html::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track {
+  background: var(--raksa-scrollbar-page-track);
+}
+
+#main::-webkit-scrollbar-track,
+#main *::-webkit-scrollbar-track {
+  background: var(--raksa-scrollbar-track);
+  border-radius: 999px;
+}
+
+html::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb,
+#main::-webkit-scrollbar-thumb,
+#main *::-webkit-scrollbar-thumb {
+  background: var(--raksa-scrollbar-thumb);
+  border: 2px solid rgba(11, 3, 18, 0.82);
+  border-radius: 999px;
+}
+
+html::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover,
+#main::-webkit-scrollbar-thumb:hover,
+#main *::-webkit-scrollbar-thumb:hover {
+  background: var(--raksa-scrollbar-thumb-hover);
+}
+
+html::-webkit-scrollbar-corner,
+body::-webkit-scrollbar-corner,
+#main::-webkit-scrollbar-corner,
+#main *::-webkit-scrollbar-corner {
+  background: transparent;
+}
