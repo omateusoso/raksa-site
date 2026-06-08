@@ -2067,6 +2067,18 @@ h1 {
   grid-column: 1 / -1;
 }
 
+.crm-form-sections,
+.crm-details-sections {
+  display: grid;
+  gap: 20px;
+}
+
+.crm-form-section,
+.details-section {
+  display: grid;
+  gap: 12px;
+}
+
 .crm-metrics .metric {
   padding: 14px 16px;
 }

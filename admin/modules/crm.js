@@ -382,11 +382,13 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             <button class="icon-button" type="button" data-close-modal>Fechar</button>
           </div>
           
-          <div class="crm-form-sections" style="display: grid; gap: 24px; max-height: calc(100vh - 200px); overflow-y: auto; padding-right: 8px;">
-            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
-              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Dados comerciais</legend>
-              <div class="crm-form-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
-                <label class="field field-span-2" style="grid-column: span 2;">
+          <div class="crm-form-sections">
+            <section class="crm-form-section">
+              <div class="budget-section-heading">
+                <strong>Dados comerciais</strong>
+              </div>
+              <div class="crm-form-grid">
+                <label class="field field-span-2">
                   <span>Nome</span>
                   <input class="input" name="name" value="${valueAttr(client?.name)}" required>
                 </label>
@@ -401,19 +403,19 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <span>Status</span>
                   <select class="select" name="status">${selectOptions(CLIENT_STATUSES, client?.status || "active")}</select>
                 </label>
-                <label class="field" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Documento (CPF / CNPJ)</span>
                   <input class="input" name="document" value="${valueAttr(client?.document)}" placeholder="00.000.000/0000-00">
                 </label>
-                <label class="field" data-tax-fields style="grid-column: span 1; ${client?.type === "person" ? "display: none;" : ""}">
+                <label class="field" data-tax-fields style="${client?.type === "person" ? "display: none;" : ""}">
                   <span>Inscrição Estadual</span>
                   <input class="input" name="state_registration" value="${valueAttr(client?.state_registration)}">
                 </label>
-                <label class="field" data-tax-fields style="grid-column: span 1; ${client?.type === "person" ? "display: none;" : ""}">
+                <label class="field" data-tax-fields style="${client?.type === "person" ? "display: none;" : ""}">
                   <span>Inscrição Municipal</span>
                   <input class="input" name="municipal_registration" value="${valueAttr(client?.municipal_registration)}">
                 </label>
-                <label class="field" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Indicação</span>
                   <select class="select" name="referral_source">
                     <option value="">Sem indicação</option>
@@ -423,43 +425,47 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                       .join("")}
                   </select>
                 </label>
-                <label class="field" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Comissão (%)</span>
                   <input class="input" name="commission_rate" type="number" min="0" max="100" step="0.01" value="${valueAttr(client?.commission_rate ?? "")}">
                 </label>
               </div>
-            </fieldset>
+            </section>
 
-            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
-              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Dados de contato</legend>
-              <div class="crm-form-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
-                <label class="field field-span-2" style="grid-column: span 2;">
+            <section class="crm-form-section">
+              <div class="budget-section-heading">
+                <strong>Dados de contato</strong>
+              </div>
+              <div class="crm-form-grid">
+                <label class="field field-span-2">
                   <span>E-mail principal</span>
                   <input class="input" name="email" type="email" value="${valueAttr(client?.email)}">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>E-mail de cobrança</span>
                   <input class="input" name="billing_email" type="email" value="${valueAttr(client?.billing_email)}">
                 </label>
-                <label class="field" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Telefone</span>
                   <input class="input" name="phone" value="${valueAttr(client?.phone)}" placeholder="(00) 00000-0000">
                 </label>
-                <label class="field" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Website</span>
                   <input class="input" name="website" type="text" inputmode="url" value="${valueAttr(client?.website)}" placeholder="raksa.com.br">
                 </label>
               </div>
-            </fieldset>
+            </section>
 
-            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
-              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Endereço Comercial</legend>
-              <div class="crm-form-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+            <section class="crm-form-section">
+              <div class="budget-section-heading">
+                <strong>Endereço Comercial</strong>
+              </div>
+              <div class="crm-form-grid">
                 <label class="field">
                   <span>CEP</span>
                   <input class="input" name="postal_code" value="${valueAttr(client?.postal_code)}" placeholder="00000-000">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Rua</span>
                   <input class="input" name="street" value="${valueAttr(client?.street)}">
                 </label>
@@ -467,15 +473,15 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <span>Número</span>
                   <input class="input" name="number" value="${valueAttr(client?.number)}">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Complemento</span>
                   <input class="input" name="complement" value="${valueAttr(client?.complement)}">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Bairro</span>
                   <input class="input" name="neighborhood" value="${valueAttr(client?.neighborhood)}">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Cidade</span>
                   <input class="input" name="city" value="${valueAttr(client?.city)}">
                 </label>
@@ -488,22 +494,22 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <input class="input" name="country" value="${valueAttr(client?.country || "Brasil")}">
                 </label>
               </div>
-            </fieldset>
+            </section>
 
-            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
-              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Endereço de Faturamento</legend>
-              <div style="margin-bottom: 16px;">
-                <label class="toggle-row">
-                  <input type="checkbox" name="billing_same_as_commercial" data-billing-same-toggle ${client?.billing_same_as_commercial !== false ? "checked" : ""}>
-                  <span>Mesmo do comercial</span>
-                </label>
+            <section class="crm-form-section">
+              <div class="budget-section-heading">
+                <strong>Endereço de Faturamento</strong>
               </div>
-              <div class="crm-form-grid" data-billing-address-fields style="display: ${client?.billing_same_as_commercial !== false ? "none" : "grid"}; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+              <div class="toggle-row" style="margin-bottom: 14px;">
+                <input type="checkbox" name="billing_same_as_commercial" data-billing-same-toggle ${client?.billing_same_as_commercial !== false ? "checked" : ""}>
+                <span>Mesmo do comercial</span>
+              </div>
+              <div class="crm-form-grid" data-billing-address-fields style="display: ${client?.billing_same_as_commercial !== false ? "none" : "grid"};">
                 <label class="field">
                   <span>CEP</span>
                   <input class="input" name="billing_postal_code" value="${valueAttr(client?.billing_postal_code)}" placeholder="00000-000">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Rua</span>
                   <input class="input" name="billing_street" value="${valueAttr(client?.billing_street)}">
                 </label>
@@ -511,15 +517,15 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <span>Número</span>
                   <input class="input" name="billing_number" value="${valueAttr(client?.billing_number)}">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Complemento</span>
                   <input class="input" name="billing_complement" value="${valueAttr(client?.billing_complement)}">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Bairro</span>
                   <input class="input" name="billing_neighborhood" value="${valueAttr(client?.billing_neighborhood)}">
                 </label>
-                <label class="field field-span-2" style="grid-column: span 2;">
+                <label class="field field-span-2">
                   <span>Cidade</span>
                   <input class="input" name="billing_city" value="${valueAttr(client?.billing_city)}">
                 </label>
@@ -532,17 +538,19 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <input class="input" name="billing_country" value="${valueAttr(client?.billing_country || "Brasil")}">
                 </label>
               </div>
-            </fieldset>
+            </section>
 
-            <fieldset class="form-section panel" style="border: none; padding: 16px; margin: 0;">
-              <legend style="font-size: 16px; font-weight: 700; color: var(--accent); margin-bottom: 16px; padding: 0;">Notas</legend>
-              <div class="crm-form-grid" style="display: grid; grid-template-columns: 1fr; gap: 16px;">
-                <label class="field field-span-4" style="grid-column: span 1;">
+            <section class="crm-form-section">
+              <div class="budget-section-heading">
+                <strong>Notas</strong>
+              </div>
+              <div class="crm-form-grid">
+                <label class="field field-span-4">
                   <span>Notas sobre o cliente</span>
                   <textarea class="textarea textarea-small" name="notes">${escapeHtml(client?.notes || "")}</textarea>
                 </label>
               </div>
-            </fieldset>
+            </section>
           </div>
           ${renderCrmFormActions("clients", client, "Criar cliente", "Salvar cliente")}
         </form>
@@ -576,70 +584,76 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             </div>
           </div>
           
-          <div class="crm-details-sections" style="display: grid; gap: 24px;">
-            <section class="details-section panel" style="padding: 16px;">
-              <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--accent); font-weight: 700;">Dados comerciais</h3>
-              <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+          <div class="crm-details-sections">
+            <section class="details-section">
+              <div class="budget-section-heading">
+                <strong>Dados comerciais</strong>
+              </div>
+              <div class="detail-grid">
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">Tipo</span>
+                  <span>Tipo</span>
                   <strong>${client.type === "person" ? "Pessoa Física" : "Pessoa Jurídica"}</strong>
                 </div>
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">Status</span>
+                  <span>Status</span>
                   <strong>${labelFromOptions(CLIENT_STATUSES, client.status)}</strong>
                 </div>
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">Documento</span>
+                  <span>Documento</span>
                   <strong>${client.document || "-"}</strong>
                 </div>
                 ${client.type !== "person" ? `
                   <div class="detail-item">
-                    <span style="font-size: 12px; color: var(--subtle); display: block;">Inscrição Estadual</span>
+                    <span>Inscrição Estadual</span>
                     <strong>${client.state_registration || "-"}</strong>
                   </div>
                   <div class="detail-item">
-                    <span style="font-size: 12px; color: var(--subtle); display: block;">Inscrição Municipal</span>
+                    <span>Inscrição Municipal</span>
                     <strong>${client.municipal_registration || "-"}</strong>
                   </div>
                 ` : ""}
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">Indicação</span>
+                  <span>Indicação</span>
                   <strong>${escapeHtml(referralName)}</strong>
                 </div>
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">Comissão</span>
+                  <span>Comissão</span>
                   <strong>${Number(client.commission_rate || 0) ? `${formatPercent(client.commission_rate)} comissão` : "-"}</strong>
                 </div>
               </div>
             </section>
 
-            <section class="details-section panel" style="padding: 16px;">
-              <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--accent); font-weight: 700;">Dados de contato</h3>
-              <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
+            <section class="details-section">
+              <div class="budget-section-heading">
+                <strong>Dados de contato</strong>
+              </div>
+              <div class="detail-grid">
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">E-mail</span>
+                  <span>E-mail</span>
                   <strong>${client.email || "-"}</strong>
                 </div>
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">E-mail de cobrança</span>
+                  <span>E-mail de cobrança</span>
                   <strong>${client.billing_email || "-"}</strong>
                 </div>
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">Telefone</span>
+                  <span>Telefone</span>
                   <strong>${client.phone || "-"}</strong>
                 </div>
                 <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block;">Website</span>
+                  <span>Website</span>
                   <strong>${client.website || "-"}</strong>
                 </div>
               </div>
             </section>
 
-            <section class="details-section panel" style="padding: 16px;">
-              <h3 style="font-size: 16px; margin-bottom: 12px; color: var(--accent); font-weight: 700;">Endereço</h3>
-              <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
-                <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block; margin-bottom: 4px;">Endereço Comercial</span>
+            <section class="details-section">
+              <div class="budget-section-heading">
+                <strong>Endereço</strong>
+              </div>
+              <div class="detail-grid">
+                <div class="detail-item field-span-2">
+                  <span>Endereço Comercial</span>
                   <strong>
                     ${client.street ? `
                       ${escapeHtml(client.street)}, ${escapeHtml(client.number || "s/n")}
@@ -651,8 +665,8 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                     ` : (client.address || "-")}
                   </strong>
                 </div>
-                <div class="detail-item">
-                  <span style="font-size: 12px; color: var(--subtle); display: block; margin-bottom: 4px;">Endereço de Faturamento</span>
+                <div class="detail-item field-span-2">
+                  <span>Endereço de Faturamento</span>
                   <strong>
                     ${client.billing_same_as_commercial !== false ? "Mesmo do comercial" : `
                       ${client.billing_street ? `
@@ -670,8 +684,10 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             </section>
           </div>
 
-          <section class="notes-section panel" style="padding: 16px; background: rgba(255, 255, 255, 0.02);">
-            <h3 style="font-size: 16px; margin-bottom: 8px; color: var(--accent); font-weight: 700;">Notas sobre o cliente</h3>
+          <section class="notes-section">
+            <div class="budget-section-heading">
+              <strong>Notas sobre o cliente</strong>
+            </div>
             <p style="color: var(--muted); margin: 0; white-space: pre-wrap; font-size: 14px; line-height: 1.5;">${escapeHtml(client.notes) || "Nenhuma nota cadastrada."}</p>
           </section>
 
