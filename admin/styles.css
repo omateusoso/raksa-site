@@ -397,10 +397,10 @@ h1 {
   background: rgba(8, 3, 14, 0.86);
   border-right: 1px solid rgba(255, 255, 255, 0.1);
   display: grid;
-  gap: 28px;
+  gap: 30px;
   grid-template-rows: auto 1fr auto;
   min-height: 100vh;
-  padding: 24px 18px;
+  padding: 24px 16px;
   position: sticky;
   top: 0;
 }
@@ -433,29 +433,37 @@ h1 {
 .sidebar-nav {
   align-content: start;
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 
 .sidebar-link {
   align-items: center;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: 8px;
   color: rgba(255, 255, 255, 0.64);
   display: flex;
-  min-height: 44px;
+  font-size: 14px;
+  font-weight: 700;
+  min-height: 40px;
   padding: 0 12px;
+  position: relative;
   text-decoration: none;
   transition: background 160ms ease, border-color 160ms ease, color 160ms ease;
 }
 
 .sidebar-category {
-  color: rgba(255, 255, 255, 0.38);
+  color: rgba(255, 255, 255, 0.34);
   display: block;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
-  margin: 14px 0 4px;
+  letter-spacing: 0.08em;
+  margin: 20px 0 3px;
   padding: 0 12px;
   text-transform: uppercase;
+}
+
+.sidebar-category:first-child {
+  margin-top: 0;
 }
 
 .sidebar-category + .sidebar-link {
@@ -471,9 +479,10 @@ h1 {
 }
 
 .sidebar-link.is-active {
-  background: rgba(139, 81, 255, 0.14);
-  border-color: rgba(139, 81, 255, 0.42);
+  background: rgba(139, 81, 255, 0.2);
+  border-color: rgba(139, 81, 255, 0.55);
   color: #fff;
+  box-shadow: inset 3px 0 0 rgba(139, 81, 255, 0.92);
 }
 
 .module-main {
@@ -1130,6 +1139,62 @@ h1 {
 
 .form-actions {
   align-items: center;
+}
+
+.is-hidden {
+  display: none !important;
+}
+
+.finance-settings-page {
+  max-width: 980px;
+}
+
+.finance-settings-form {
+  max-width: 760px;
+}
+
+.affix-field {
+  align-items: center;
+  background-color: rgba(255, 255, 255, 0.075);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  display: flex;
+  min-height: 46px;
+  overflow: hidden;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.affix-field:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-color: var(--line-strong);
+}
+
+.affix-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(139, 81, 255, 0.18);
+}
+
+.affix-field .input {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  min-height: 44px;
+}
+
+.affix-field .input:focus,
+.affix-field .input:hover:not(:disabled) {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+
+.field-affix {
+  color: var(--muted);
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 800;
+  padding: 0 14px;
 }
 
 .row-actions {
@@ -3429,8 +3494,12 @@ h1 {
     align-items: center;
     display: inline-flex;
     flex: 0 0 auto;
-    margin: 0 2px 0 10px;
-    padding: 0;
+    margin: 0 2px 0 12px;
+    padding: 0 0 0 2px;
+  }
+
+  .sidebar-category:first-child {
+    margin-left: 0;
   }
 
   .sidebar-link {

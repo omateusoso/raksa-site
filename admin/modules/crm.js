@@ -8,7 +8,10 @@ import {
   ORDER_RECURRENCES,
   PRODUCT_PRICING_MODELS,
   PROJECT_STATUSES,
-} from "./constants.js?v=9";
+  SUBSTRATE_ACQUISITION_TYPES,
+  SUBSTRATE_PASS_THROUGH_METHODS,
+} from "./constants.js?v=10";
+import { calculateAppliedSubstrateCost } from "./substratePricing.js?v=1";
 import {
   dateInputValue,
   entityName,
@@ -1022,9 +1025,10 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           <thead>
             <tr>
               <th>Substrato</th>
-              <th>Tipo</th>
-              <th>Unidade</th>
-              <th>Custo unitário</th>
+              <th>Tipo de aquisição</th>
+              <th>Custo</th>
+              <th>Método de repasse</th>
+              <th>Custo aplicado estimado</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -1036,9 +1040,13 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <strong>${escapeHtml(substrate.name)}</strong>
                   <span>${escapeHtml(substrate.notes || "")}</span>
                 </td>
-                <td>${escapeHtml(substrate.kind || "-")}</td>
-                <td>${escapeHtml(substrate.unit || "-")}</td>
-                <td>${formatCurrency(substrate.unit_cost || 0)}</td>
+                <td>${escapeHtml(substrateAcquisitionLabel(substrate))}</td>
+                <td>
+                  <strong>${formatCurrency(substrateCostAmount(substrate))}</strong>
+                  <span>${escapeHtml(substrate.cost_unit || substrate.unit || "-")}</span>
+                </td>
+                <td>${escapeHtml(substratePassThroughLabel(substrate))}</td>
+                <td><strong>${formatCurrency(calculateAppliedSubstrateCost(substrate, 1))}</strong></td>
                 <td><span class="status-pill">${substrate.status === "inactive" ? "Inativo" : "Ativo"}</span></td>
                 <td>
                   <div class="row-actions">
@@ -1770,7 +1778,15 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     return state.substrates.filter((substrate) => {
       if (status !== "all" && substrate.status !== status) return false;
       if (!query) return true;
-      return [substrate.name, substrate.kind, substrate.unit, substrate.notes]
+      return [
+        substrate.name,
+        substrate.kind,
+        substrateAcquisitionLabel(substrate),
+        substrate.unit,
+        substrate.cost_unit,
+        substratePassThroughLabel(substrate),
+        substrate.notes,
+      ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -1992,6 +2008,26 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
 
   function substrateRecord(id) {
     return state.substrates.find((substrate) => substrate.id === id) || null;
+  }
+
+  function substrateCostAmount(substrate) {
+    return Number(substrate?.cost_amount ?? substrate?.unit_cost ?? 0);
+  }
+
+  function substrateAcquisitionType(substrate) {
+    return substrate?.acquisition_type || "unit_cost";
+  }
+
+  function substrateAcquisitionLabel(substrate) {
+    return labelFromOptions(SUBSTRATE_ACQUISITION_TYPES, substrateAcquisitionType(substrate));
+  }
+
+  function substratePassThroughMethod(substrate) {
+    return substrate?.pass_through_method || "none";
+  }
+
+  function substratePassThroughLabel(substrate) {
+    return labelFromOptions(SUBSTRATE_PASS_THROUGH_METHODS, substratePassThroughMethod(substrate));
   }
 
   function productPricingLabel(product) {
@@ -2872,9 +2908,14 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   }
 
   function renderSubstrateModal(substrate) {
+    const passThroughMethod = substratePassThroughMethod(substrate);
+    const acquisitionType = substrateAcquisitionType(substrate);
+    const costAmount = substrateCostAmount(substrate);
+    const costUnit = substrate?.cost_unit || substrate?.unit || "unidade";
+
     return `
       <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="${substrate ? "Editar substrato" : "Novo substrato"}">
-        <form class="modal form-stack" data-substrate-form ${crmFormAttrs("substrates")}>
+        <form class="modal modal-wide form-stack" data-substrate-form ${crmFormAttrs("substrates")}>
           <div class="modal-header">
             <div>
               <span class="eyebrow">Substrato</span>
@@ -2888,22 +2929,55 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           </label>
           <div class="form-grid">
             <label class="field">
-              <span>Tipo</span>
-              <input class="input" name="kind" value="${valueAttr(substrate?.kind)}" placeholder="Licença, ferramenta, mídia...">
+              <span>Tipo de aquisição</span>
+              <select class="select" name="acquisition_type">${selectOptions(SUBSTRATE_ACQUISITION_TYPES, acquisitionType)}</select>
             </label>
             <label class="field">
               <span>Unidade</span>
-              <input class="input" name="unit" value="${valueAttr(substrate?.unit || "un")}">
+              <input class="input" name="cost_unit" value="${valueAttr(costUnit)}" placeholder="mês, ano, unidade, projeto, licença">
             </label>
           </div>
           <div class="form-grid">
             <label class="field">
-              <span>Custo unitário</span>
-              <input class="input" name="unit_cost" type="number" min="0" step="0.01" value="${valueAttr(substrate?.unit_cost ?? "")}">
+              <span>Custo</span>
+              <span class="affix-field">
+                <span class="field-affix" aria-hidden="true">R$</span>
+                <input class="input" name="cost_amount" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(costAmount || "")}" placeholder="70,00">
+              </span>
             </label>
+            <label class="field">
+              <span>Método de repasse</span>
+              <select class="select" name="pass_through_method" data-substrate-pass-through-method>${selectOptions(SUBSTRATE_PASS_THROUGH_METHODS, passThroughMethod)}</select>
+            </label>
+          </div>
+          <div class="form-grid substrate-rule-grid">
+            <label class="field ${passThroughMethod === "fixed" ? "" : "is-hidden"}" data-substrate-rule-field="fixed">
+              <span>Valor fixo de repasse</span>
+              <span class="affix-field">
+                <span class="field-affix" aria-hidden="true">R$</span>
+                <input class="input" name="fixed_pass_through_amount" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.fixed_pass_through_amount ?? "")}" placeholder="0,00">
+              </span>
+            </label>
+            <label class="field ${passThroughMethod === "percent" ? "" : "is-hidden"}" data-substrate-rule-field="percent">
+              <span>Percentual de repasse</span>
+              <span class="affix-field">
+                <input class="input" name="pass_through_percent" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.pass_through_percent ?? "")}" placeholder="100">
+                <span class="field-affix" aria-hidden="true">%</span>
+              </span>
+            </label>
+            <label class="field ${passThroughMethod === "allocated" ? "" : "is-hidden"}" data-substrate-rule-field="allocated">
+              <span>Quantidade estimada para rateio</span>
+              <input class="input" name="allocation_quantity" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.allocation_quantity ?? "")}" placeholder="10">
+            </label>
+          </div>
+          <div class="form-grid">
             <label class="field">
               <span>Status</span>
               <select class="select" name="status">${selectOptions([["active", "Ativo"], ["inactive", "Inativo"]], substrate?.status || "active")}</select>
+            </label>
+            <label class="field">
+              <span>Classificação interna</span>
+              <input class="input" name="kind" value="${valueAttr(substrate?.kind)}" placeholder="Ferramenta, licença, mídia...">
             </label>
           </div>
           <label class="field">
@@ -3882,14 +3956,24 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const editing = crmEditRecord("substrates");
     const data = new FormData(form);
     const errors = [];
+    const costAmount = nonNegativeNumberFromForm(data, "cost_amount", "Custo", errors);
     const payload = {
       name: requiredTextFromForm(data, "name", "o nome do substrato", errors),
       kind: textFromForm(data, "kind"),
-      unit: textFromForm(data, "unit") || "un",
-      unit_cost: nonNegativeNumberFromForm(data, "unit_cost", "Custo unitário", errors),
+      acquisition_type: String(data.get("acquisition_type") || "unit_cost"),
+      unit: textFromForm(data, "cost_unit") || "unidade",
+      cost_unit: textFromForm(data, "cost_unit") || "unidade",
+      unit_cost: costAmount,
+      cost_amount: costAmount,
+      pass_through_method: String(data.get("pass_through_method") || "none"),
+      fixed_pass_through_amount: nonNegativeNumberFromForm(data, "fixed_pass_through_amount", "Valor fixo de repasse", errors),
+      pass_through_percent: nonNegativeNumberFromForm(data, "pass_through_percent", "Percentual de repasse", errors),
+      allocation_quantity: nonNegativeNumberFromForm(data, "allocation_quantity", "Quantidade estimada para rateio", errors),
       notes: textFromForm(data, "notes"),
       status: String(data.get("status") || "active"),
     };
+    if (!SUBSTRATE_ACQUISITION_TYPES.some(([value]) => value === payload.acquisition_type)) errors.push("Tipo de aquisição inválido.");
+    if (!SUBSTRATE_PASS_THROUGH_METHODS.some(([value]) => value === payload.pass_through_method)) errors.push("Método de repasse inválido.");
     if (!validateCrmPayload("substrates", errors)) return;
 
     await submitCrmRecord("substrates", payload, editing, editing ? "Substrato atualizado." : "Substrato cadastrado.");

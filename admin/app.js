@@ -1,7 +1,8 @@
-import { createCrmModule } from "./modules/crm.js?v=15";
+import { createCrmModule } from "./modules/crm.js?v=16";
 import { createMetricsModule } from "./modules/metrics.js?v=3";
-import { createApiModule } from "./modules/api.js?v=7";
-import { createShellModule } from "./modules/shell.js?v=10";
+import { createApiModule } from "./modules/api.js?v=9";
+import { createShellModule } from "./modules/shell.js?v=11";
+import { createFinancialModule } from "./modules/financial.js?v=2";
 import { createCasesModule } from "./modules/cases.js?v=6";
 import { formatPhone, formatCPF_CNPJ, formatCEP } from "./modules/utils.js?v=3";
 
@@ -50,6 +51,11 @@ const state = {
   serviceOrders: [],
   timeEntries: [],
   metricsEvents: [],
+  financialSettings: null,
+  financialSettingsLoaded: false,
+  financialSettingsLoading: false,
+  financialSettingsLoadError: "",
+  financialSettingsSaving: false,
 };
 
 function isLoggedIn() {
@@ -141,9 +147,11 @@ const {
   isManagedUpload,
   loadAdminData,
   loadCases,
+  loadFinancialSettings,
   loadSession,
   persistCase,
   persistCases,
+  saveFinancialSettings,
   seedCasesIfEmpty,
 } = createApiModule({
   state,
@@ -176,6 +184,7 @@ function render() {
   if (section === "cases" && slug) renderEditor(decodeURIComponent(slug).normalize("NFC"));
   else if (section === "home") renderAdminDashboard();
   else if (section === "site-home") renderHomeSettings();
+  else if (section === "financeiro") renderFinancePage();
   else if (section === "crm" && !slug) window.location.replace("#/crm/clients");
   else if (section === "crm") renderCrmPage(slug);
   else if (section === "clients") window.location.replace("#/crm/clients");
@@ -291,9 +300,18 @@ const {
 
 const { renderMetricsPage } = createMetricsModule({ state, renderShell, renderCrmNotice });
 
+const { renderFinancePage, submitFinancialSettings } = createFinancialModule({
+  state,
+  render,
+  renderShell,
+  setNotice,
+  loadFinancialSettings,
+  saveFinancialSettings,
+});
 
 document.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-login-form]");
+  const financialForm = event.target.closest("[data-financial-form]");
   const clientForm = event.target.closest("[data-client-form]");
   const contactForm = event.target.closest("[data-contact-form]");
   const projectForm = event.target.closest("[data-project-form]");
@@ -302,9 +320,10 @@ document.addEventListener("submit", async (event) => {
   const budgetForm = event.target.closest("[data-budget-form]");
   const orderForm = event.target.closest("[data-order-form]");
   const timeForm = event.target.closest("[data-time-form]");
-  if (!form && !clientForm && !contactForm && !projectForm && !productForm && !substrateForm && !budgetForm && !orderForm && !timeForm) return;
+  if (!form && !financialForm && !clientForm && !contactForm && !projectForm && !productForm && !substrateForm && !budgetForm && !orderForm && !timeForm) return;
   event.preventDefault();
 
+  if (financialForm) return submitFinancialSettings(financialForm);
   if (clientForm) return createClient(clientForm);
   if (contactForm) return createContact(contactForm);
   if (projectForm) return createProject(projectForm);
@@ -516,6 +535,15 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  const substratePassMethod = event.target.closest("[data-substrate-pass-through-method]");
+  if (substratePassMethod) {
+    const form = substratePassMethod.closest("[data-substrate-form]");
+    form?.querySelectorAll("[data-substrate-rule-field]").forEach((field) => {
+      field.classList.toggle("is-hidden", field.dataset.substrateRuleField !== substratePassMethod.value);
+    });
+    return;
+  }
+
   if (event.target.matches("[data-client-type-select]")) {
     const val = event.target.value;
     const taxFields = event.target.form.querySelectorAll("[data-tax-fields]");

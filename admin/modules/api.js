@@ -7,6 +7,9 @@ import {
   CLIENT_COLUMNS,
   CONTACT_COLUMNS,
   EXTENDED_CASE_COLUMNS,
+  FINANCIAL_SETTINGS_COLUMNS,
+  FINANCIAL_SETTINGS_ID,
+  FINANCIAL_SETTINGS_TABLE,
   FULL_CASE_COLUMNS,
   IMAGE_BUCKET,
   LEGACY_STORAGE_KEYS,
@@ -18,10 +21,18 @@ import {
   SUBSTRATE_COLUMNS,
   TAGS,
   TIME_ENTRY_COLUMNS,
-} from "./constants.js?v=7";
+} from "./constants.js?v=10";
 import { normalizeAssetUrl } from "./utils.js?v=3";
 
 export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn }) {
+  const DEFAULT_FINANCIAL_SETTINGS = {
+    id: FINANCIAL_SETTINGS_ID,
+    hourly_rate: 70,
+    default_markup_percent: 30,
+    default_tax_percent: 6,
+    currency: "BRL",
+  };
+
   function supabase() {
     return getSupabase();
   }
@@ -120,6 +131,90 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
 
   function isSchemaColumnError(error) {
     return Boolean(error?.message && /column|schema cache|does not exist/i.test(error.message));
+  }
+
+  function numberOrDefault(value, fallback) {
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function normalizeFinancialSettings(row = {}) {
+    return {
+      id: row.id || FINANCIAL_SETTINGS_ID,
+      hourly_rate: numberOrDefault(row.hourly_rate, DEFAULT_FINANCIAL_SETTINGS.hourly_rate),
+      default_markup_percent: numberOrDefault(row.default_markup_percent, DEFAULT_FINANCIAL_SETTINGS.default_markup_percent),
+      default_tax_percent: numberOrDefault(row.default_tax_percent, DEFAULT_FINANCIAL_SETTINGS.default_tax_percent),
+      currency: row.currency || DEFAULT_FINANCIAL_SETTINGS.currency,
+      created_at: row.created_at || "",
+      updated_at: row.updated_at || "",
+    };
+  }
+
+  async function loadFinancialSettings({ force = false } = {}) {
+    const client = supabase();
+    if (!client || !isLoggedIn()) return { data: null, error: new Error("Supabase indisponivel.") };
+    if (state.financialSettingsLoaded && !force) return { data: state.financialSettings, error: null };
+    if (state.financialSettingsLoading) return { data: state.financialSettings, error: null };
+
+    state.financialSettingsLoading = true;
+
+    const selectResult = await client
+      .from(FINANCIAL_SETTINGS_TABLE)
+      .select(FINANCIAL_SETTINGS_COLUMNS)
+      .eq("id", FINANCIAL_SETTINGS_ID)
+      .maybeSingle();
+
+    if (selectResult.error) {
+      state.financialSettingsLoading = false;
+      return { data: null, error: selectResult.error };
+    }
+
+    if (selectResult.data) {
+      state.financialSettings = normalizeFinancialSettings(selectResult.data);
+      state.financialSettingsLoaded = true;
+      state.financialSettingsLoading = false;
+      return { data: state.financialSettings, error: null };
+    }
+
+    const insertResult = await client
+      .from(FINANCIAL_SETTINGS_TABLE)
+      .insert(DEFAULT_FINANCIAL_SETTINGS)
+      .select(FINANCIAL_SETTINGS_COLUMNS)
+      .single();
+
+    state.financialSettingsLoading = false;
+    if (insertResult.error) return { data: null, error: insertResult.error };
+
+    state.financialSettings = normalizeFinancialSettings(insertResult.data);
+    state.financialSettingsLoaded = true;
+    return { data: state.financialSettings, error: null };
+  }
+
+  async function saveFinancialSettings(payload = {}) {
+    const client = supabase();
+    if (!client || !isLoggedIn()) return { data: null, error: new Error("Supabase indisponivel.") };
+
+    const record = {
+      id: FINANCIAL_SETTINGS_ID,
+      hourly_rate: numberOrDefault(payload.hourly_rate, DEFAULT_FINANCIAL_SETTINGS.hourly_rate),
+      default_markup_percent: numberOrDefault(payload.default_markup_percent, DEFAULT_FINANCIAL_SETTINGS.default_markup_percent),
+      default_tax_percent: numberOrDefault(payload.default_tax_percent, DEFAULT_FINANCIAL_SETTINGS.default_tax_percent),
+      currency: payload.currency || DEFAULT_FINANCIAL_SETTINGS.currency,
+      updated_at: new Date().toISOString(),
+    };
+
+    const result = await client
+      .from(FINANCIAL_SETTINGS_TABLE)
+      .upsert(record, { onConflict: "id" })
+      .select(FINANCIAL_SETTINGS_COLUMNS)
+      .single();
+
+    if (!result.error) {
+      state.financialSettings = normalizeFinancialSettings(result.data);
+      state.financialSettingsLoaded = true;
+    }
+
+    return result;
   }
 
   async function loadCases() {
@@ -393,9 +488,11 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     isManagedUpload,
     loadAdminData,
     loadCases,
+    loadFinancialSettings,
     loadSession,
     persistCase,
     persistCases,
+    saveFinancialSettings,
     seedCasesIfEmpty,
   };
 }

@@ -17,11 +17,14 @@ export const CLIENT_COLUMNS = "id, name, type, document, email, phone, website, 
 export const CONTACT_COLUMNS = "id, client_id, name, role, email, phone, notes, created_at, updated_at";
 export const PROJECT_COLUMNS = "id, client_id, case_id, name, status, description, starts_at, due_at, budget_total, created_at, updated_at";
 export const PRODUCT_COLUMNS = "id, name, category, description, base_price, estimated_hours, default_markup, pricing_model, hourly_rate, default_substrate_ids, status, created_at, updated_at";
-export const SUBSTRATE_COLUMNS = "id, name, kind, unit, unit_cost, notes, status, created_at, updated_at";
+export const SUBSTRATE_COLUMNS = "id, name, kind, acquisition_type, unit, cost_unit, unit_cost, cost_amount, pass_through_method, fixed_pass_through_amount, pass_through_percent, allocation_quantity, notes, status, created_at, updated_at";
 export const BUDGET_COLUMNS = "id, budget_number, client_id, contact_id, project_id, title, status, currency, subtotal, discount, tax, total, valid_until, resolved, payload, created_at, updated_at";
 export const SERVICE_ORDER_COLUMNS = "id, client_id, project_id, budget_id, title, status, scope, starts_at, due_at, recurrence, billing_cycle, estimated_hours, hourly_rate, created_at, updated_at";
 export const TIME_ENTRY_COLUMNS = "id, project_id, service_order_id, user_id, work_date, minutes, hourly_rate, description, billable, created_at, updated_at";
 export const METRIC_COLUMNS = "id, event_name, path, metadata, created_at";
+export const FINANCIAL_SETTINGS_TABLE = "financial_settings";
+export const FINANCIAL_SETTINGS_ID = "global";
+export const FINANCIAL_SETTINGS_COLUMNS = "id, hourly_rate, default_markup_percent, default_tax_percent, currency, created_at, updated_at";
 
 export const ADMIN_SECTIONS = [
   ["home", "Dashboard"],
@@ -77,6 +80,24 @@ export const PRODUCT_PRICING_MODELS = [
   ["fixed", "Preço fixo"],
   ["hourly", "Horas x valor/hora"],
   ["hybrid", "Fixo + horas"],
+];
+
+export const SUBSTRATE_ACQUISITION_TYPES = [
+  ["monthly_subscription", "Assinatura mensal"],
+  ["annual_subscription", "Assinatura anual"],
+  ["permanent_license", "Licença permanente"],
+  ["one_time_purchase", "Compra avulsa"],
+  ["unit_cost", "Custo por unidade"],
+  ["free", "Gratuito"],
+];
+
+export const SUBSTRATE_PASS_THROUGH_METHODS = [
+  ["none", "Não repassar"],
+  ["full", "Repassar 100%"],
+  ["fixed", "Valor fixo por orçamento"],
+  ["percent", "Percentual do custo"],
+  ["allocated", "Rateio por quantidade estimada"],
+  ["per_unit", "Por unidade usada"],
 ];
 
 export const ORDER_RECURRENCES = [

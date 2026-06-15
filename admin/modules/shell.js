@@ -83,16 +83,21 @@ export function createShellModule({ app, state, getSupabase }) {
   function renderPlatformSidebar() {
     const section = currentSection();
     const crmTab = currentCrmTab();
-    const cmsLinks = [
+    const contentLinks = [
       ["#/cases", "Cases", section === "cases"],
       ["#/site-home", "Página inicial", section === "site-home"],
     ];
-    const crmLinks = [
+    const commercialLinks = [
       ["#/crm/clients", "Clientes", crmTab === "clients"],
       ["#/crm/budgets", "Orçamentos", crmTab === "budgets"],
       ["#/crm/orders", "Ordens de serviço", crmTab === "orders"],
+    ];
+    const pricingLinks = [
       ["#/crm/products", "Produtos", crmTab === "products"],
       ["#/crm/substrates", "Substratos", crmTab === "substrates"],
+    ];
+    const settingsLinks = [
+      ["#/financeiro", "Financeiro", section === "financeiro"],
     ];
 
     return `
@@ -102,11 +107,14 @@ export function createShellModule({ app, state, getSupabase }) {
           <span>Admin</span>
         </div>
         <nav class="sidebar-nav">
-          ${renderSidebarLink("#/home", "Página inicial", section === "home")}
-          ${renderSidebarCategory("CMS")}
-          ${cmsLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
-          ${renderSidebarCategory("CRM")}
-          ${crmLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
+          ${renderSidebarCategory("Conteúdo")}
+          ${contentLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
+          ${renderSidebarCategory("Comercial")}
+          ${commercialLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
+          ${renderSidebarCategory("Precificação")}
+          ${pricingLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
+          ${renderSidebarCategory("Configurações")}
+          ${settingsLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
         </nav>
         ${renderProfileBlock({ compact: true })}
       </aside>`;
