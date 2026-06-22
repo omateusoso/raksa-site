@@ -1,6 +1,6 @@
-import { createCrmModule } from "./modules/crm.js?v=16";
+import { createCrmModule } from "./modules/crm.js?v=28";
 import { createMetricsModule } from "./modules/metrics.js?v=3";
-import { createApiModule } from "./modules/api.js?v=9";
+import { createApiModule } from "./modules/api.js?v=13";
 import { createShellModule } from "./modules/shell.js?v=11";
 import { createFinancialModule } from "./modules/financial.js?v=2";
 import { createCasesModule } from "./modules/cases.js?v=6";
@@ -46,6 +46,7 @@ const state = {
   contacts: [],
   projects: [],
   products: [],
+  productSubstrates: [],
   substrates: [],
   budgets: [],
   serviceOrders: [],
@@ -237,6 +238,7 @@ const {
 const {
   addBudgetItem,
   cancelCrmEdit,
+  addBudgetItemSubstrate,
   createBudget,
   createClient,
   createContact,
@@ -279,6 +281,7 @@ const {
   selectAllVisibleOrders,
   syncBudgetContactOptions,
   removeBudgetItem,
+  removeBudgetItemSubstrate,
   updateBudgetEstimate,
   updateBudgetItemsEstimate,
   updateBudgetFilters,
@@ -296,6 +299,7 @@ const {
   render,
   renderShell,
   loadAdminData,
+  loadFinancialSettings,
 });
 
 const { renderMetricsPage } = createMetricsModule({ state, renderShell, renderCrmNotice });
@@ -308,6 +312,55 @@ const { renderFinancePage, submitFinancialSettings } = createFinancialModule({
   loadFinancialSettings,
   saveFinancialSettings,
 });
+
+function productPreviewNumber(value = 0) {
+  return new Intl.NumberFormat("pt-BR", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: Number(value || 0) % 1 ? 1 : 0,
+  }).format(Number(value || 0));
+}
+
+function updateProductHoursPreview(form) {
+  const output = form?.querySelector("[data-product-hours-preview-output]");
+  if (!form || !output) return;
+
+  const hoursPerUnit = Number(String(form.elements.hours_per_unit?.value || "0").replace(",", ".")) || 0;
+  const defaultQuantity = Math.max(1, Number(String(form.elements.default_quantity?.value || "1").replace(",", ".")) || 1);
+  const productionUnit = String(form.elements.production_unit?.value || "un.").trim() || "un.";
+  const estimatedHours = hoursPerUnit * defaultQuantity;
+
+  const total = output.querySelector("strong");
+  const formula = output.querySelector("small");
+  if (total) total.textContent = `${productPreviewNumber(estimatedHours)}h`;
+  if (formula) formula.textContent = `${productPreviewNumber(hoursPerUnit)}h x ${productPreviewNumber(defaultQuantity)} ${productionUnit}`;
+}
+
+function syncBudgetConditionalFields(form) {
+  if (!form) return;
+  const discount = Number(String(form.elements.discount?.value || "0").replace(",", ".")) || 0;
+  const reasonField = form.querySelector("[data-discount-reason-field]");
+  const reasonOtherField = form.querySelector("[data-discount-reason-other-field]");
+  const reasonSelect = form.querySelector("[data-discount-reason-select]");
+  const reasonOtherInput = form.elements.discount_reason_other;
+  const hasDiscount = discount > 0;
+  reasonField?.classList.toggle("is-hidden", !hasDiscount);
+  if (reasonSelect) reasonSelect.required = hasDiscount;
+  const needsOtherReason = hasDiscount && reasonSelect?.value === "Outro";
+  reasonOtherField?.classList.toggle("is-hidden", !needsOtherReason);
+  if (reasonOtherInput) reasonOtherInput.required = needsOtherReason;
+  if (!hasDiscount && reasonSelect) reasonSelect.value = "";
+  if (!needsOtherReason && reasonOtherInput) reasonOtherInput.value = "";
+
+  const paymentSelect = form.querySelector("[data-payment-method-select]");
+  const installmentsField = form.querySelector("[data-payment-installments-field]");
+  const installmentsSelect = form.elements.payment_installments;
+  const isInstallments = paymentSelect?.value === "Crédito parcelado";
+  installmentsField?.classList.toggle("is-hidden", !isInstallments);
+  if (installmentsSelect) {
+    installmentsSelect.required = isInstallments;
+    if (!isInstallments) installmentsSelect.value = "";
+  }
+}
 
 document.addEventListener("submit", async (event) => {
   const form = event.target.closest("[data-login-form]");
@@ -381,6 +434,10 @@ document.addEventListener("submit", async (event) => {
 
 document.addEventListener("input", (event) => {
   const target = event.target;
+  if (target.matches("[data-product-hours-preview]")) {
+    updateProductHoursPreview(target.closest("[data-product-form]"));
+  }
+
   if (target.matches('input[name="phone"]')) {
     const start = target.selectionStart;
     const oldVal = target.value;
@@ -424,6 +481,7 @@ document.addEventListener("input", (event) => {
 
   if (event.target.matches("[data-budget-money]")) {
     updateBudgetTotalPreview(event.target.form);
+    syncBudgetConditionalFields(event.target.form);
   }
 
   if (event.target.matches("[data-budget-item-calc]")) {
@@ -496,6 +554,8 @@ document.addEventListener("click", async (event) => {
   if (target.matches("[data-edit-budget-modal]")) openBudgetModal(target.dataset.editBudgetModal);
   if (target.matches("[data-add-budget-item]")) addBudgetItem(target.closest("[data-budget-form]"));
   if (target.matches("[data-remove-budget-item]")) removeBudgetItem(target);
+  if (target.matches("[data-add-budget-item-substrate]")) addBudgetItemSubstrate(target);
+  if (target.matches("[data-remove-budget-item-substrate]")) removeBudgetItemSubstrate(target);
   if (target.matches("[data-recalc-budget-items]")) updateBudgetItemsEstimate(target.closest("[data-budget-form]"), true, true);
   if (target.matches("[data-duplicate-budget]")) await duplicateSelectedBudget();
   if (target.matches("[data-duplicate-order]")) await duplicateSelectedServiceOrders();
@@ -510,6 +570,22 @@ document.addEventListener("click", async (event) => {
   if (target.matches("[data-open-order-modal]")) openServiceOrderModal(target.dataset.openOrderModal || "");
   if (target.matches("[data-open-product-modal]")) openProductModal(target.dataset.openProductModal || "");
   if (target.matches("[data-open-substrate-modal]")) openSubstrateModal(target.dataset.openSubstrateModal || "");
+  if (target.matches("[data-add-product-substrate]")) {
+    const form = target.closest("[data-product-form]");
+    const list = form?.querySelector("[data-product-substrate-list]");
+    const template = form?.querySelector("[data-product-substrate-template]");
+    if (list && template) list.insertAdjacentHTML("beforeend", template.innerHTML);
+  }
+  if (target.matches("[data-remove-product-substrate]")) {
+    const row = target.closest("[data-product-substrate-row]");
+    const form = target.closest("[data-product-form]");
+    row?.remove();
+    const list = form?.querySelector("[data-product-substrate-list]");
+    const template = form?.querySelector("[data-product-substrate-template]");
+    if (list && template && !list.querySelector("[data-product-substrate-row]")) {
+      list.insertAdjacentHTML("beforeend", template.innerHTML);
+    }
+  }
   if (target.matches("[data-edit-crm]")) {
     const [table, id] = target.dataset.editCrm.split(":");
     openCrmEdit(table, id);
@@ -535,6 +611,10 @@ document.addEventListener("click", async (event) => {
 });
 
 document.addEventListener("change", async (event) => {
+  if (event.target.matches('input[name="production_unit"]')) {
+    updateProductHoursPreview(event.target.closest("[data-product-form]"));
+  }
+
   const substratePassMethod = event.target.closest("[data-substrate-pass-through-method]");
   if (substratePassMethod) {
     const form = substratePassMethod.closest("[data-substrate-form]");
@@ -577,6 +657,12 @@ document.addEventListener("change", async (event) => {
   const budgetItemCalc = event.target.closest("[data-budget-item-calc]");
   if (budgetItemCalc) {
     updateBudgetItemsEstimate(budgetItemCalc.form, true);
+    return;
+  }
+
+  if (event.target.closest("[data-discount-reason-select]") || event.target.closest("[data-payment-method-select]")) {
+    syncBudgetConditionalFields(event.target.form);
+    updateBudgetTotalPreview(event.target.form);
     return;
   }
 

@@ -15,13 +15,14 @@ import {
   LEGACY_STORAGE_KEYS,
   METRIC_COLUMNS,
   PRODUCT_COLUMNS,
+  PRODUCT_SUBSTRATE_COLUMNS,
   PROJECT_COLUMNS,
   SERVICE_ORDER_COLUMNS,
   STORAGE_KEY,
   SUBSTRATE_COLUMNS,
   TAGS,
   TIME_ENTRY_COLUMNS,
-} from "./constants.js?v=10";
+} from "./constants.js?v=14";
 import { normalizeAssetUrl } from "./utils.js?v=3";
 
 export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn }) {
@@ -278,11 +279,12 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     if (!client || !isLoggedIn() || (state.crmLoaded && !force) || state.crmLoading) return;
     state.crmLoading = true;
 
-    const [clients, contacts, projects, products, substrates, budgets, serviceOrders, timeEntries, metricsEvents] = await Promise.all([
+    const [clients, contacts, projects, products, productSubstrates, substrates, budgets, serviceOrders, timeEntries, metricsEvents] = await Promise.all([
       client.from("clients").select(CLIENT_COLUMNS).order("name", { ascending: true }),
       client.from("contacts").select(CONTACT_COLUMNS).order("name", { ascending: true }),
       client.from("projects").select(PROJECT_COLUMNS).order("created_at", { ascending: false }),
       client.from("products").select(PRODUCT_COLUMNS).order("name", { ascending: true }),
+      client.from("product_substrates").select(PRODUCT_SUBSTRATE_COLUMNS).order("created_at", { ascending: true }),
       client.from("substrates").select(SUBSTRATE_COLUMNS).order("name", { ascending: true }),
       client.from("budgets").select(BUDGET_COLUMNS).order("budget_number", { ascending: false }).order("created_at", { ascending: false }),
       client.from("service_orders").select(SERVICE_ORDER_COLUMNS).order("created_at", { ascending: false }),
@@ -291,7 +293,7 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     ]);
 
     state.crmLoading = false;
-    const error = [clients, contacts, projects, products, substrates, budgets, serviceOrders, timeEntries, metricsEvents].find((result) => result.error)?.error;
+    const error = [clients, contacts, projects, products, productSubstrates, substrates, budgets, serviceOrders, timeEntries, metricsEvents].find((result) => result.error)?.error;
     if (error) {
       console.warn("[RAKSA Admin] CRM indisponivel.", error);
       return;
@@ -301,6 +303,7 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     state.contacts = contacts.data || [];
     state.projects = projects.data || [];
     state.products = products.data || [];
+    state.productSubstrates = productSubstrates.data || [];
     state.substrates = substrates.data || [];
     state.budgets = budgets.data || [];
     state.serviceOrders = serviceOrders.data || [];

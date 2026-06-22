@@ -10,7 +10,8 @@ import {
   PROJECT_STATUSES,
   SUBSTRATE_ACQUISITION_TYPES,
   SUBSTRATE_PASS_THROUGH_METHODS,
-} from "./constants.js?v=10";
+} from "./constants.js?v=14";
+import { calculateProductPricing, roundMoney } from "./pricingEngine.js?v=1";
 import { calculateAppliedSubstrateCost } from "./substratePricing.js?v=1";
 import {
   dateInputValue,
@@ -18,6 +19,7 @@ import {
   escapeHtml,
   formatCurrency,
   formatDate,
+  formatDateTime,
   labelFromOptions,
   nonNegativeNumberFromForm,
   optionalDateFromForm,
@@ -32,7 +34,7 @@ import {
   valueAttr,
 } from "./utils.js?v=3";
 
-export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, clearNotice, render, renderShell, loadAdminData }) {
+export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, clearNotice, render, renderShell, loadAdminData, loadFinancialSettings }) {
   function supabase() {
     return getSupabase();
   }
@@ -962,10 +964,8 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             <tr>
               <th>Produto</th>
               <th>Categoria</th>
-              <th>Modelo</th>
-              <th>Base / hora</th>
-              <th>Horas</th>
-              <th>Custos padrão</th>
+              <th>Horas padrão</th>
+              <th>Substratos padrão</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -978,13 +978,8 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                   <span>${escapeHtml(product.description || "")}</span>
                 </td>
                 <td>${escapeHtml(product.category || "-")}</td>
-                <td>${escapeHtml(productPricingLabel(product))}</td>
-                <td>
-                  <strong>${formatCurrency(product.base_price || 0)}</strong>
-                  <span>${product.hourly_rate ? `${formatCurrency(product.hourly_rate)}/h` : "Sem valor/hora"}</span>
-                </td>
-                <td>${formatDecimalHours(product.estimated_hours || 0)}</td>
-                <td>${escapeHtml(productIncludedSubstrates(product).map((item) => item.name).join(", ") || "-")}</td>
+                <td>${formatDecimalHours(product.hours_per_unit || product.estimated_hours || 0)}</td>
+                <td>${escapeHtml(productLinkedSubstrates(product).map((item) => item.name).join(", ") || "-")}</td>
                 <td><span class="status-pill">${product.status === "inactive" ? "Inativo" : "Ativo"}</span></td>
                 <td>
                   <div class="row-actions">
@@ -1025,9 +1020,9 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           <thead>
             <tr>
               <th>Substrato</th>
-              <th>Tipo de aquisição</th>
+              <th>Tipo de custo</th>
               <th>Custo</th>
-              <th>Método de repasse</th>
+              <th>Repasse ao cliente</th>
               <th>Custo aplicado estimado</th>
               <th>Status</th>
               <th></th>
@@ -1038,7 +1033,6 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
               <tr>
                 <td>
                   <strong>${escapeHtml(substrate.name)}</strong>
-                  <span>${escapeHtml(substrate.notes || "")}</span>
                 </td>
                 <td>${escapeHtml(substrateAcquisitionLabel(substrate))}</td>
                 <td>
@@ -1349,7 +1343,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           budget.resolved ? "sim" : "nao",
           payload.productName || payload.serviceType || "",
           Number(budget.subtotal || 0),
-          Number(budget.discount || 0),
+          `${Number(budget.discount || 0)}%`,
           Number(budget.tax || 0),
           Number(budget.total || 0),
           String(budget.created_at || "").slice(0, 10),
@@ -1764,7 +1758,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     return state.products.filter((product) => {
       if (status !== "all" && product.status !== status) return false;
       if (!query) return true;
-      return [product.name, product.category, product.description, productPricingLabel(product), productIncludedSubstrates(product).map((item) => item.name).join(" ")]
+      return [product.name, product.category, product.description, product.production_unit, productPricingLabel(product), productLinkedSubstrates(product).map((item) => item.name).join(" ")]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -1916,8 +1910,42 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   }
 
   function budgetNumberLabel(budget) {
-    if (budget?.budget_number) return String(budget.budget_number).padStart(5, "0");
+    if (budget?.budget_number) return String(budget.budget_number);
     return budget?.id ? `TMP-${String(budget.id).slice(0, 8)}` : "Automático";
+  }
+
+  function currentUserLabel() {
+    const user = state.session?.user || {};
+    return user.user_metadata?.name || user.user_metadata?.full_name || user.email || "Usuário atual";
+  }
+
+  function defaultBudgetValidUntil() {
+    const date = new Date();
+    date.setMonth(date.getMonth() + 3);
+    return date.toISOString().slice(0, 10);
+  }
+
+  function nextBudgetNumberPreview() {
+    const maxNumber = state.budgets.reduce((max, budget) => Math.max(max, Number(budget.budget_number || 0)), 209);
+    return Math.max(210, maxNumber + 1);
+  }
+
+  function budgetDiscountLabel(budget) {
+    const percent = Number(budget?.discount || 0);
+    const grossTotal = Number(budget?.subtotal || 0) + Number(budget?.tax || 0);
+    const amount = roundMoney(grossTotal * (percent / 100));
+    return `${formatPercent(percent)} (${formatCurrency(amount)})`;
+  }
+
+  function budgetDeliveryInputValue(value) {
+    const text = String(value || "").trim();
+    return /^\d{4}-\d{2}-\d{2}/.test(text) ? text.slice(0, 10) : "";
+  }
+
+  function budgetDeliveryLabel(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    return /^\d{4}-\d{2}-\d{2}/.test(text) ? formatDate(text.slice(0, 10)) : text;
   }
 
   function budgetItemCount(budget) {
@@ -2034,6 +2062,176 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     return labelFromOptions(PRODUCT_PRICING_MODELS, product?.pricing_model || "fixed");
   }
 
+  function productSubstrateLinks(product) {
+    if (!product?.id) return [];
+    return state.productSubstrates
+      .filter((link) => link.product_id === product.id)
+      .sort((a, b) => String(substrateRecord(a.substrate_id)?.name || "").localeCompare(String(substrateRecord(b.substrate_id)?.name || ""), "pt-BR"));
+  }
+
+  function productLinkedSubstrates(product) {
+    return productSubstrateLinks(product)
+      .map((link) => substrateRecord(link.substrate_id))
+      .filter(Boolean);
+  }
+
+  function budgetFinancialSettings() {
+    return {
+      hourly_rate: Number(state.financialSettings?.hourly_rate ?? 70),
+      default_markup_percent: Number(state.financialSettings?.default_markup_percent ?? 30),
+      default_tax_percent: Number(state.financialSettings?.default_tax_percent ?? 6),
+      currency: state.financialSettings?.currency || "BRL",
+    };
+  }
+
+  function productPricingSubstrates(product, extraSubstrate = null) {
+    const linked = productSubstrateLinks(product)
+      .map((link) => {
+        const substrate = substrateRecord(link.substrate_id);
+        return substrate ? {
+          substrate,
+          quantity: Number(link.quantity || 1),
+          isRequired: link.is_required !== false,
+          notes: link.notes || "",
+        } : null;
+      })
+      .filter(Boolean);
+
+    if (extraSubstrate && !linked.some((entry) => entry.substrate.id === extraSubstrate.id)) {
+      linked.push({ substrate: extraSubstrate, quantity: 1, isRequired: false, notes: "Custo extra do orçamento" });
+    }
+
+    return linked;
+  }
+
+  function calculateBudgetPricing(product, quantity = 0, extraSubstrate = null) {
+    return calculateProductPricing({
+      product: product || {},
+      quantity,
+      financialSettings: budgetFinancialSettings(),
+      substrates: productPricingSubstrates(product, extraSubstrate),
+    });
+  }
+
+  function emptyBudgetPricingSnapshot() {
+    return {
+      quantity: 0,
+      laborHours: 0,
+      hourlyRate: roundMoney(budgetFinancialSettings().hourly_rate),
+      laborCost: 0,
+      substrateCost: 0,
+      subtotal: 0,
+      markupPercent: roundMoney(budgetFinancialSettings().default_markup_percent),
+      markupAmount: 0,
+      taxPercent: roundMoney(budgetFinancialSettings().default_tax_percent),
+      taxAmount: 0,
+      total: 0,
+    };
+  }
+
+  function combineBudgetPricingSnapshots(snapshots = []) {
+    const valid = snapshots.filter(Boolean);
+    if (!valid.length) return emptyBudgetPricingSnapshot();
+    const settings = budgetFinancialSettings();
+    const subtotal = valid.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    const markupAmount = valid.reduce((sum, item) => sum + Number(item.markupAmount || 0), 0);
+    const taxAmount = valid.reduce((sum, item) => sum + Number(item.taxAmount || 0), 0);
+    return {
+      quantity: roundMoney(valid.reduce((sum, item) => sum + Number(item.quantity || 0), 0)),
+      laborHours: roundMoney(valid.reduce((sum, item) => sum + Number(item.laborHours || 0), 0)),
+      hourlyRate: roundMoney(valid.find((item) => Number(item.hourlyRate || 0))?.hourlyRate || settings.hourly_rate),
+      laborCost: roundMoney(valid.reduce((sum, item) => sum + Number(item.laborCost || 0), 0)),
+      substrateCost: roundMoney(valid.reduce((sum, item) => sum + Number(item.substrateCost || 0), 0)),
+      subtotal: roundMoney(subtotal),
+      markupPercent: roundMoney(settings.default_markup_percent),
+      markupAmount: roundMoney(markupAmount),
+      taxPercent: roundMoney(settings.default_tax_percent),
+      taxAmount: roundMoney(taxAmount),
+      total: roundMoney(subtotal + markupAmount + taxAmount),
+    };
+  }
+
+  function budgetPricingSnapshot(record) {
+    const payload = budgetPayload(record);
+    const source = record?.pricing_snapshot && typeof record.pricing_snapshot === "object" && !Array.isArray(record.pricing_snapshot)
+      ? record.pricing_snapshot
+      : payload.pricingSnapshot && typeof payload.pricingSnapshot === "object" && !Array.isArray(payload.pricingSnapshot)
+        ? payload.pricingSnapshot
+        : {};
+    const settings = budgetFinancialSettings();
+    return {
+      quantity: roundMoney(record?.quantity ?? source.quantity ?? payload.quantity ?? 0),
+      laborHours: roundMoney(record?.labor_hours_snapshot ?? source.laborHours ?? 0),
+      hourlyRate: roundMoney(record?.hourly_rate_snapshot ?? source.hourlyRate ?? settings.hourly_rate),
+      laborCost: roundMoney(record?.labor_cost_snapshot ?? source.laborCost ?? 0),
+      substrateCost: roundMoney(record?.substrate_cost_snapshot ?? source.substrateCost ?? 0),
+      subtotal: roundMoney(record?.subtotal_snapshot ?? source.subtotal ?? 0),
+      markupPercent: roundMoney(record?.markup_percent_snapshot ?? source.markupPercent ?? settings.default_markup_percent),
+      markupAmount: roundMoney(record?.markup_amount_snapshot ?? source.markupAmount ?? 0),
+      taxPercent: roundMoney(record?.tax_percent_snapshot ?? source.taxPercent ?? settings.default_tax_percent),
+      taxAmount: roundMoney(record?.tax_amount_snapshot ?? source.taxAmount ?? 0),
+      total: roundMoney(record?.total_snapshot ?? source.total ?? 0),
+    };
+  }
+
+  function budgetPricingSnapshotColumns(snapshot) {
+    return {
+      quantity: roundMoney(snapshot.quantity),
+      pricing_snapshot: snapshot,
+      hourly_rate_snapshot: roundMoney(snapshot.hourlyRate),
+      markup_percent_snapshot: roundMoney(snapshot.markupPercent),
+      tax_percent_snapshot: roundMoney(snapshot.taxPercent),
+      labor_hours_snapshot: roundMoney(snapshot.laborHours),
+      labor_cost_snapshot: roundMoney(snapshot.laborCost),
+      substrate_cost_snapshot: roundMoney(snapshot.substrateCost),
+      subtotal_snapshot: roundMoney(snapshot.subtotal),
+      markup_amount_snapshot: roundMoney(snapshot.markupAmount),
+      tax_amount_snapshot: roundMoney(snapshot.taxAmount),
+      total_snapshot: roundMoney(snapshot.total),
+    };
+  }
+
+  function renderBudgetPricingSummary(snapshot = emptyBudgetPricingSnapshot()) {
+    return `
+      <div class="budget-pricing-summary" data-budget-pricing-summary>
+        <div class="budget-pricing-summary-heading">
+          <strong>Resumo de cálculo</strong>
+          <span>Prévia automática baseada no produto, quantidade, substratos e configurações financeiras.</span>
+        </div>
+        <dl>
+          <div><dt>Quantidade</dt><dd data-pricing-summary="quantity">${formatDecimalNumber(snapshot.quantity)}</dd></div>
+          <div><dt>Horas totais</dt><dd data-pricing-summary="laborHours">${formatDecimalHours(snapshot.laborHours)}</dd></div>
+          <div><dt>Valor/hora usado</dt><dd data-pricing-summary="hourlyRate">${formatCurrency(snapshot.hourlyRate)}</dd></div>
+          <div><dt>Mão de obra</dt><dd data-pricing-summary="laborCost">${formatCurrency(snapshot.laborCost)}</dd></div>
+          <div><dt>Substratos</dt><dd data-pricing-summary="substrateCost">${formatCurrency(snapshot.substrateCost)}</dd></div>
+          <div><dt>Subtotal</dt><dd data-pricing-summary="subtotal">${formatCurrency(snapshot.subtotal)}</dd></div>
+          <div><dt>Markup</dt><dd data-pricing-summary="markupAmount">${formatPercent(snapshot.markupPercent)} · ${formatCurrency(snapshot.markupAmount)}</dd></div>
+          <div><dt>Impostos</dt><dd data-pricing-summary="taxAmount">${formatPercent(snapshot.taxPercent)} · ${formatCurrency(snapshot.taxAmount)}</dd></div>
+          <div class="budget-pricing-summary-total"><dt>Total estimado</dt><dd data-pricing-summary="total">${formatCurrency(snapshot.total)}</dd></div>
+        </dl>
+      </div>`;
+  }
+
+  function updateBudgetPricingSummary(form, snapshot = emptyBudgetPricingSnapshot()) {
+    const summary = form?.querySelector("[data-budget-pricing-summary]");
+    if (!summary) return;
+    const values = {
+      quantity: formatDecimalNumber(snapshot.quantity),
+      laborHours: formatDecimalHours(snapshot.laborHours),
+      hourlyRate: formatCurrency(snapshot.hourlyRate),
+      laborCost: formatCurrency(snapshot.laborCost),
+      substrateCost: formatCurrency(snapshot.substrateCost),
+      subtotal: formatCurrency(snapshot.subtotal),
+      markupAmount: `${formatPercent(snapshot.markupPercent)} · ${formatCurrency(snapshot.markupAmount)}`,
+      taxAmount: `${formatPercent(snapshot.taxPercent)} · ${formatCurrency(snapshot.taxAmount)}`,
+      total: formatCurrency(snapshot.total),
+    };
+    Object.entries(values).forEach(([key, value]) => {
+      const node = summary.querySelector(`[data-pricing-summary="${key}"]`);
+      if (node) node.textContent = value;
+    });
+  }
+
   function productIncludedSubstrateIds(product) {
     const value = product?.default_substrate_ids;
     if (Array.isArray(value)) return value.map(String).filter(Boolean);
@@ -2089,18 +2287,92 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   }
 
   function renderProductSubstrateChoices(product) {
-    if (!state.substrates.length) return `<div class="empty-state compact-empty">Cadastre substratos para vinculá-los ao produto.</div>`;
-    const selected = new Set(productIncludedSubstrateIds(product));
+    const links = productSubstrateLinks(product);
+
     return `
-      <div class="choice-grid">
-        ${state.substrates.map((substrate) => `
-          <label class="choice-pill">
-            <input type="checkbox" name="default_substrate_ids" value="${escapeHtml(substrate.id)}" ${selected.has(substrate.id) ? "checked" : ""}>
-            <span>${escapeHtml(substrate.name)}</span>
-            <small>${formatCurrency(substrate.unit_cost || 0)}</small>
-          </label>
-        `).join("")}
+      <section class="product-substrate-panel">
+        <div class="panel-heading product-substrate-heading">
+          <div>
+            <h2>Substratos padrão</h2>
+            <p class="section-subtitle">Sugestões copiadas para o orçamento, editáveis em cada proposta.</p>
+          </div>
+          <button class="button button-secondary" type="button" data-add-product-substrate ${state.substrates.length ? "" : "disabled"}>Adicionar substrato</button>
+        </div>
+        ${!state.substrates.length ? `<div class="empty-state compact-empty">Cadastre substratos antes de vinculá-los ao produto.</div>` : `
+          <div class="product-substrate-list" data-product-substrate-list>
+            ${links.length ? links.map((link) => renderProductSubstrateRow(link)).join("") : renderProductSubstrateRow()}
+          </div>
+          <template data-product-substrate-template>
+            ${renderProductSubstrateRow()}
+          </template>
+        `}
+      </section>`;
+  }
+
+  function renderProductSubstrateRow(link = {}) {
+    return `
+      <div class="product-substrate-row" data-product-substrate-row>
+        <label class="field compact-field">
+          <span>Substrato</span>
+          <select class="select" name="product_substrate_id">${selectOptions(state.substrates.map((substrate) => [substrate.id, substrate.name]), link.substrate_id || "", "Selecione")}</select>
+        </label>
+        <label class="field compact-field">
+          <span>Quantidade padrão</span>
+          <input class="input" name="product_substrate_quantity" type="number" min="0" step="0.01" value="${valueAttr(link.quantity ?? 1)}">
+        </label>
+        <button class="icon-button" type="button" data-remove-product-substrate>Remover</button>
       </div>`;
+  }
+
+  function collectProductSubstrateLinks(form, errors) {
+    const rows = [...form.querySelectorAll("[data-product-substrate-row]")];
+    const seen = new Set();
+    const links = [];
+
+    rows.forEach((row) => {
+      const substrateId = String(row.querySelector('[name="product_substrate_id"]')?.value || "").trim();
+      const quantityValue = row.querySelector('[name="product_substrate_quantity"]')?.value;
+      const hasAnyValue = substrateId;
+      if (!hasAnyValue) return;
+      if (!substrateId) {
+        errors.push("Selecione o substrato vinculado ao produto.");
+        return;
+      }
+      if (seen.has(substrateId)) {
+        errors.push("Não duplique o mesmo substrato no produto.");
+        return;
+      }
+      seen.add(substrateId);
+
+      const quantity = Math.max(0, Number(String(quantityValue || "1").replace(",", ".")));
+      if (!Number.isFinite(quantity)) {
+        errors.push("Quantidade do substrato deve ser um número positivo.");
+        return;
+      }
+
+      links.push({
+        substrate_id: substrateId,
+        quantity: quantity || 1,
+        is_required: true,
+        notes: "",
+      });
+    });
+
+    return links;
+  }
+
+  async function saveProductSubstrateLinks(productId, links = []) {
+    const deleteResult = await supabase().from("product_substrates").delete().eq("product_id", productId);
+    if (deleteResult.error) return deleteResult;
+    if (!links.length) return { error: null };
+
+    return supabase().from("product_substrates").insert(links.map((link) => ({
+      product_id: productId,
+      substrate_id: link.substrate_id,
+      quantity: link.quantity || 1,
+      is_required: link.is_required !== false,
+      notes: link.notes || "",
+    })));
   }
 
   function budgetEditorItems(budget) {
@@ -2138,13 +2410,23 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const quantity = Math.max(1, Number(item.quantity || 1));
     const total = Number(item.total ?? item.amount ?? 0);
     const unitPrice = Number(item.unitPrice ?? item.unit_price ?? (quantity ? total / quantity : total) ?? 0);
+    const pricingSnapshot = item.pricingSnapshot && typeof item.pricingSnapshot === "object" && !Array.isArray(item.pricingSnapshot)
+      ? item.pricingSnapshot
+      : null;
+    const autoUnit = item.autoUnit ?? item.auto_unit ?? Boolean(pricingSnapshot);
     return {
       description: item.description || item.text || item.title || "",
+      proposalDescription: item.proposalDescription || item.proposal_description || item.description || item.text || item.title || "",
       productId: item.productId || item.product_id || "",
       substrateId: item.substrateId || item.substrate_id || "",
       quantity,
+      estimatedHours: Number(item.estimatedHours ?? item.estimated_hours ?? item.pricingSnapshot?.laborHours ?? 0),
+      hourlyRate: Number(item.hourlyRate ?? item.hourly_rate ?? item.pricingSnapshot?.hourlyRate ?? 0),
       unitPrice: Number.isFinite(unitPrice) ? unitPrice : 0,
       total: Number.isFinite(total) && total > 0 ? total : unitPrice * quantity,
+      substratesUsed: normalizeBudgetItemSubstrates(item),
+      pricingSnapshot,
+      autoUnit: autoUnit === true || autoUnit === "true",
     };
   }
 
@@ -2153,41 +2435,212 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     return rows.map((item, index) => renderBudgetItemRow(item, index)).join("");
   }
 
+  function normalizeBudgetItemSubstrates(item = {}) {
+    const source = Array.isArray(item.substratesUsed) ? item.substratesUsed
+      : Array.isArray(item.substrates_used) ? item.substrates_used
+        : Array.isArray(item.includedSubstrates) ? item.includedSubstrates
+          : [];
+    const normalized = source
+      .map((entry) => {
+        const id = entry.id || entry.substrateId || entry.substrate_id || "";
+        const substrate = substrateRecord(id);
+        return {
+          id: id || substrate?.id || "",
+          name: entry.name || substrate?.name || "",
+          cost: Number(entry.cost ?? substrate?.cost_amount ?? substrate?.unit_cost ?? 0),
+          quantity: Number(entry.quantity ?? entry.quantityUsed ?? entry.quantity_used ?? 1) || 1,
+          acquisition_type: entry.acquisition_type || substrate?.acquisition_type || "unit_cost",
+          unit_cost: Number(entry.unit_cost ?? entry.cost ?? substrate?.unit_cost ?? 0),
+          cost_amount: Number(entry.cost_amount ?? entry.cost ?? substrate?.cost_amount ?? substrate?.unit_cost ?? 0),
+          pass_through_method: entry.pass_through_method || substrate?.pass_through_method || "none",
+          fixed_pass_through_amount: Number(entry.fixed_pass_through_amount ?? substrate?.fixed_pass_through_amount ?? 0),
+          pass_through_percent: Number(entry.pass_through_percent ?? substrate?.pass_through_percent ?? 0),
+          allocation_quantity: Number(entry.allocation_quantity ?? substrate?.allocation_quantity ?? 0),
+        };
+      })
+      .filter((entry) => entry.id || entry.name);
+
+    if (!normalized.length && item.substrateId) {
+      const substrate = substrateRecord(item.substrateId);
+      if (substrate) {
+        normalized.push({
+          id: substrate.id,
+          name: substrate.name,
+          cost: Number(substrate.cost_amount ?? substrate.unit_cost ?? 0),
+          quantity: 1,
+          acquisition_type: substrate.acquisition_type || "unit_cost",
+          unit_cost: Number(substrate.unit_cost ?? 0),
+          cost_amount: Number(substrate.cost_amount ?? substrate.unit_cost ?? 0),
+          pass_through_method: substrate.pass_through_method || "none",
+          fixed_pass_through_amount: Number(substrate.fixed_pass_through_amount ?? 0),
+          pass_through_percent: Number(substrate.pass_through_percent ?? 0),
+          allocation_quantity: Number(substrate.allocation_quantity ?? 0),
+        });
+      }
+    }
+
+    return normalized;
+  }
+
+  function budgetItemSubstratesFromProduct(product) {
+    return productPricingSubstrates(product).map((entry) => ({
+      id: entry.substrate.id,
+      name: entry.substrate.name,
+      cost: Number(entry.substrate.cost_amount ?? entry.substrate.unit_cost ?? 0),
+      quantity: Number(entry.quantity || 1),
+      acquisition_type: entry.substrate.acquisition_type || "unit_cost",
+      unit_cost: Number(entry.substrate.unit_cost ?? 0),
+      cost_amount: Number(entry.substrate.cost_amount ?? entry.substrate.unit_cost ?? 0),
+      pass_through_method: entry.substrate.pass_through_method || "none",
+      fixed_pass_through_amount: Number(entry.substrate.fixed_pass_through_amount ?? 0),
+      pass_through_percent: Number(entry.substrate.pass_through_percent ?? 0),
+      allocation_quantity: Number(entry.substrate.allocation_quantity ?? 0),
+    }));
+  }
+
+  function budgetItemSubstrateEntries(row) {
+    return [...row.querySelectorAll("[data-budget-item-substrate-row]")]
+      .map((entry) => {
+        const selected = substrateRecord(entry.querySelector('[name="item_substrate_id"]')?.value);
+        const snapshotId = entry.querySelector('[name="item_substrate_snapshot_id"]')?.value || "";
+        const useSnapshot = !selected || snapshotId === selected.id;
+        const substrate = {
+          id: selected?.id || entry.querySelector('[name="item_substrate_id"]')?.value || "",
+          name: useSnapshot ? entry.querySelector('[name="item_substrate_name"]')?.value || selected?.name || "" : selected?.name || "",
+          acquisition_type: useSnapshot ? entry.querySelector('[name="item_substrate_acquisition_type"]')?.value || selected?.acquisition_type || "unit_cost" : selected?.acquisition_type || "unit_cost",
+          unit_cost: useSnapshot ? decimalInputValue(entry.querySelector('[name="item_substrate_unit_cost"]')?.value || selected?.unit_cost || 0) : Number(selected?.unit_cost || 0),
+          cost_amount: useSnapshot ? decimalInputValue(entry.querySelector('[name="item_substrate_cost_amount"]')?.value || selected?.cost_amount || selected?.unit_cost || 0) : Number(selected?.cost_amount ?? selected?.unit_cost ?? 0),
+          pass_through_method: useSnapshot ? entry.querySelector('[name="item_substrate_pass_through_method"]')?.value || selected?.pass_through_method || "none" : selected?.pass_through_method || "none",
+          fixed_pass_through_amount: useSnapshot ? decimalInputValue(entry.querySelector('[name="item_substrate_fixed_pass_through_amount"]')?.value || selected?.fixed_pass_through_amount || 0) : Number(selected?.fixed_pass_through_amount || 0),
+          pass_through_percent: useSnapshot ? decimalInputValue(entry.querySelector('[name="item_substrate_pass_through_percent"]')?.value || selected?.pass_through_percent || 0) : Number(selected?.pass_through_percent || 0),
+          allocation_quantity: useSnapshot ? decimalInputValue(entry.querySelector('[name="item_substrate_allocation_quantity"]')?.value || selected?.allocation_quantity || 0) : Number(selected?.allocation_quantity || 0),
+        };
+        if (!substrate.id && !substrate.name) return null;
+        return {
+          substrate,
+          quantity: Math.max(0, Number(String(entry.querySelector('[name="item_substrate_quantity"]')?.value || "1").replace(",", ".")) || 1),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function calculateCustomBudgetItemPricing({ quantity = 1, hours = 0, hourlyRate = 0, substrates = [] } = {}) {
+    return calculateProductPricing({
+      product: { hours_per_unit: hours },
+      quantity,
+      financialSettings: {
+        ...budgetFinancialSettings(),
+        hourly_rate: hourlyRate || budgetFinancialSettings().hourly_rate,
+      },
+      substrates,
+    });
+  }
+
+  function pricingSnapshotForBillableTotal(pricing, billableTotal) {
+    const totalBeforeTax = roundMoney(billableTotal);
+    const markupDivider = 1 + (Number(pricing.markupPercent || 0) / 100);
+    const subtotal = markupDivider > 0 ? roundMoney(totalBeforeTax / markupDivider) : totalBeforeTax;
+    const markupAmount = roundMoney(totalBeforeTax - subtotal);
+    const taxAmount = roundMoney(subtotal * (Number(pricing.taxPercent || 0) / 100));
+    return {
+      ...pricing,
+      subtotal,
+      markupAmount,
+      taxAmount,
+      total: roundMoney(totalBeforeTax + taxAmount),
+    };
+  }
+
+  function renderBudgetItemSubstrateRow(entry = {}) {
+    const substrateOptions = state.substrates.map((substrate) => [substrate.id, `${substrate.name}${substrate.unit_cost ? ` · ${formatCurrency(substrate.unit_cost)}` : ""}`]);
+    return `
+      <div class="budget-item-substrate-row" data-budget-item-substrate-row>
+        <input type="hidden" name="item_substrate_snapshot_id" value="${valueAttr(entry.id || entry.substrateId || "")}">
+        <input type="hidden" name="item_substrate_name" value="${valueAttr(entry.name || "")}">
+        <input type="hidden" name="item_substrate_acquisition_type" value="${valueAttr(entry.acquisition_type || "unit_cost")}">
+        <input type="hidden" name="item_substrate_unit_cost" value="${valueAttr(entry.unit_cost ?? entry.cost ?? 0)}">
+        <input type="hidden" name="item_substrate_cost_amount" value="${valueAttr(entry.cost_amount ?? entry.cost ?? 0)}">
+        <input type="hidden" name="item_substrate_pass_through_method" value="${valueAttr(entry.pass_through_method || "none")}">
+        <input type="hidden" name="item_substrate_fixed_pass_through_amount" value="${valueAttr(entry.fixed_pass_through_amount ?? 0)}">
+        <input type="hidden" name="item_substrate_pass_through_percent" value="${valueAttr(entry.pass_through_percent ?? 0)}">
+        <input type="hidden" name="item_substrate_allocation_quantity" value="${valueAttr(entry.allocation_quantity ?? 0)}">
+        <label class="field compact-field">
+          <span>Substrato</span>
+          <select class="select" name="item_substrate_id" data-budget-item-calc>${selectOptions(substrateOptions, entry.id || entry.substrateId || "", "Selecione")}</select>
+        </label>
+        <label class="field compact-field">
+          <span>Quantidade</span>
+          <input class="input" name="item_substrate_quantity" type="number" min="0" step="0.01" value="${valueAttr(entry.quantity ?? 1)}" data-budget-item-calc>
+        </label>
+        <button class="icon-button" type="button" data-remove-budget-item-substrate>Remover</button>
+      </div>`;
+  }
+
   function renderBudgetItemRow(item = {}, index = 0) {
     const productOptions = state.products.map((product) => [product.id, product.name]);
-    const substrateOptions = state.substrates.map((substrate) => [substrate.id, `${substrate.name}${substrate.unit_cost ? ` · ${formatCurrency(substrate.unit_cost)}` : ""}`]);
     const quantity = Math.max(1, Number(item.quantity || 1));
+    const hours = Number(item.estimatedHours || 0);
+    const hourlyRate = Number(item.hourlyRate || budgetFinancialSettings().hourly_rate || 0);
     const unitPrice = Number(item.unitPrice || 0);
     const total = Number(item.total || unitPrice * quantity || 0);
+    const isAutoUnit = item.autoUnit || !unitPrice;
+    const substratesUsed = normalizeBudgetItemSubstrates(item);
 
     return `
       <div class="budget-item-row" data-budget-item-row>
         <div class="budget-item-index">${index + 1}</div>
         <label class="field">
-          <span>Descrição</span>
-          <input class="input" name="item_description" value="${valueAttr(item.description)}" placeholder="Serviço ou entrega">
-        </label>
-        <label class="field">
           <span>Produto</span>
           <select class="select" name="item_product_id" data-budget-item-calc>${selectOptions(productOptions, item.productId || "", "Sem produto")}</select>
         </label>
-        <label class="field">
-          <span>Custo extra</span>
-          <select class="select" name="item_substrate_id" data-budget-item-calc>${selectOptions(substrateOptions, item.substrateId || "", "Opcional")}</select>
-        </label>
         <label class="field compact-field">
-          <span>Qtd</span>
+          <span>Quantidade</span>
           <input class="input" name="item_quantity" type="number" min="1" step="1" value="${valueAttr(quantity)}" data-budget-item-calc>
-        </label>
-        <label class="field compact-field">
-          <span>Preço unit.</span>
-          <input class="input" name="item_unit_price" type="number" min="0" step="0.01" value="${valueAttr(unitPrice ? unitPrice.toFixed(2) : "")}" data-budget-item-calc data-auto-unit="${unitPrice ? "false" : "true"}">
         </label>
         <div class="budget-item-total">
           <span>Total</span>
           <strong data-budget-item-total>${formatCurrency(total)}</strong>
         </div>
         <button class="icon-button budget-item-remove" type="button" data-remove-budget-item aria-label="Remover item">Remover</button>
+        <label class="field budget-item-description-field">
+          <span>Descrição do item</span>
+          <textarea class="textarea textarea-small" name="item_description" placeholder="Descrição copiada do produto, editável apenas neste orçamento." data-budget-item-calc>${escapeHtml(item.description || "")}</textarea>
+        </label>
+        <details class="budget-item-customizer">
+          <summary>Personalizar item</summary>
+          <input type="hidden" name="item_product_snapshot_id" value="${valueAttr(item.productId || "")}">
+          <div class="budget-item-customizer-grid">
+            <label class="field compact-field">
+              <span>Horas estimadas</span>
+              <input class="input" name="item_custom_hours" type="number" min="0" step="0.25" value="${valueAttr(hours || "")}" data-budget-item-calc>
+            </label>
+            <label class="field compact-field">
+              <span>Valor/hora usado</span>
+              <input class="input" name="item_hourly_rate" type="number" min="0" step="0.01" value="${valueAttr(hourlyRate ? hourlyRate.toFixed(2) : "")}" data-budget-item-calc>
+            </label>
+            <label class="field compact-field">
+              <span>Preço manual</span>
+              <input class="input" name="item_unit_price" type="number" min="0" step="0.01" value="${valueAttr(unitPrice ? unitPrice.toFixed(2) : "")}" data-budget-item-calc data-auto-unit="${isAutoUnit ? "true" : "false"}">
+            </label>
+          </div>
+          <div class="budget-item-substrate-panel">
+            <div class="budget-item-substrate-heading">
+              <strong>Substratos usados</strong>
+              <button class="button button-secondary" type="button" data-add-budget-item-substrate ${state.substrates.length ? "" : "disabled"}>Adicionar substrato</button>
+            </div>
+            <div class="budget-item-substrate-list" data-budget-item-substrate-list>
+              ${substratesUsed.map((entry) => renderBudgetItemSubstrateRow(entry)).join("")}
+            </div>
+            <template data-budget-item-substrate-template>
+              ${renderBudgetItemSubstrateRow()}
+            </template>
+          </div>
+          <div class="budget-item-calc-summary" data-budget-item-calc-summary>
+            <span>Resumo do item</span>
+            <strong>${formatCurrency(total)}</strong>
+            <small>${formatDecimalHours(hours * quantity)} totais · ${substratesUsed.length} substrato(s)</small>
+          </div>
+        </details>
       </div>`;
   }
 
@@ -2205,15 +2658,33 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     if (!form || !list || !row) return;
     const rows = [...list.querySelectorAll("[data-budget-item-row]")];
     if (rows.length <= 1) {
-      row.querySelectorAll("input, select").forEach((field) => {
+      row.querySelectorAll("input, select, textarea").forEach((field) => {
         if (field.name === "item_quantity") field.value = "1";
+        else if (field.name === "item_hourly_rate") field.value = valueAttr(budgetFinancialSettings().hourly_rate || "");
         else field.value = "";
       });
+      const substrateList = row.querySelector("[data-budget-item-substrate-list]");
+      if (substrateList) substrateList.innerHTML = "";
     } else {
       row.remove();
     }
     renumberBudgetItemRows(list);
     updateBudgetItemsEstimate(form, true);
+  }
+
+  function addBudgetItemSubstrate(button) {
+    const row = button?.closest("[data-budget-item-row]");
+    const list = row?.querySelector("[data-budget-item-substrate-list]");
+    const template = row?.querySelector("[data-budget-item-substrate-template]");
+    if (!row || !list || !template) return;
+    list.insertAdjacentHTML("beforeend", template.innerHTML);
+    updateBudgetItemsEstimate(row.closest("[data-budget-form]"), true);
+  }
+
+  function removeBudgetItemSubstrate(button) {
+    const row = button?.closest("[data-budget-item-row]");
+    button?.closest("[data-budget-item-substrate-row]")?.remove();
+    updateBudgetItemsEstimate(row?.closest("[data-budget-form]"), true);
   }
 
   function renumberBudgetItemRows(list) {
@@ -2254,7 +2725,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     if (Array.isArray(payload.lineItems) && payload.lineItems.length) {
       return payload.lineItems.map((item, index) => ({
         code: String(index + 1).padStart(4, "0"),
-        description: item.description || item.text || item.title || "-",
+        description: item.proposalDescription || item.description || item.text || item.title || "-",
         quantity: item.quantity || 1,
         unitPrice: Number(item.unitPrice || 0),
         total: Number(item.total || 0),
@@ -2373,12 +2844,21 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     if (typeof document !== "undefined" && document.activeElement?.name === "subtotal") {
       form.elements.subtotal.dataset.autoSubtotal = "false";
     }
+    if (typeof document !== "undefined" && document.activeElement?.name === "tax") {
+      form.elements.tax.dataset.autoTax = "false";
+    }
     const target = form.querySelector("[data-budget-total-preview-value]");
-    if (!target) return;
     const subtotal = decimalInputValue(form.elements.subtotal?.value);
     const discount = decimalInputValue(form.elements.discount?.value);
     const tax = decimalInputValue(form.elements.tax?.value);
-    target.textContent = formatCurrency(subtotal - discount + tax);
+    const grossTotal = subtotal + tax;
+    const discountAmount = roundMoney(grossTotal * (discount / 100));
+    const finalTotal = roundMoney(grossTotal - discountAmount);
+    const grossNode = form.querySelector("[data-budget-gross-total]");
+    const discountNode = form.querySelector("[data-budget-discount-preview]");
+    if (grossNode) grossNode.textContent = formatCurrency(grossTotal);
+    if (discountNode) discountNode.textContent = `${formatPercent(discount)} · ${formatCurrency(discountAmount)}`;
+    if (target) target.textContent = formatCurrency(finalTotal);
   }
 
   function updateBudgetEstimate(form, forceSubtotal = false) {
@@ -2390,8 +2870,8 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const product = productRecord(form.elements.product_id?.value);
     const substrate = substrateRecord(form.elements.substrate_id?.value);
     const quantity = Math.max(1, Number(form.elements.quantity?.value || 1));
-    const estimate = calculateBudgetEstimate(product, substrate, quantity);
-    const subtotal = estimate.subtotal;
+    const pricing = calculateBudgetPricing(product, quantity, substrate);
+    const subtotal = pricing.subtotal + pricing.markupAmount;
     const subtotalInput = form.elements.subtotal;
     const shouldWriteSubtotal = subtotalInput
       && subtotal > 0
@@ -2400,17 +2880,23 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       subtotalInput.value = subtotal.toFixed(2);
       subtotalInput.dataset.autoSubtotal = "true";
     }
+    const taxInput = form.elements.tax;
+    if (taxInput && pricing.taxAmount > 0 && (forceSubtotal || !taxInput.value || taxInput.dataset.autoTax === "true")) {
+      taxInput.value = pricing.taxAmount.toFixed(2);
+      taxInput.dataset.autoTax = "true";
+    }
     const detail = form.querySelector("[data-budget-estimate-detail]");
     if (detail) {
       const parts = [
-        product ? `${product.name}: ${productPricingLabel(product)} (${formatCurrency(estimate.baseAmount)})` : "",
-        estimate.includedSubstrates.length ? `Custos padrão: ${estimate.includedSubstrates.map((item) => item.name).join(", ")} (${formatCurrency(estimate.includedSubstrates.reduce((sum, item) => sum + Number(item.unit_cost || 0), 0))})` : "",
-        estimate.additionalSubstrates.length ? `Custo extra: ${estimate.additionalSubstrates.map((item) => item.name).join(", ")} (${formatCurrency(estimate.additionalSubstrates.reduce((sum, item) => sum + Number(item.unit_cost || 0), 0))})` : "",
-        estimate.markupRate ? `Markup: ${formatPercent(estimate.markupRate)} (${formatCurrency(estimate.markupAmount)})` : "",
+        product ? `${product.name}: ${productPricingLabel(product)}` : "",
+        product ? `Mão de obra ${formatCurrency(pricing.laborCost)}` : "",
+        pricing.substrateCost ? `Substratos ${formatCurrency(pricing.substrateCost)}` : "",
+        pricing.markupAmount ? `Markup ${formatPercent(pricing.markupPercent)} (${formatCurrency(pricing.markupAmount)})` : "",
         quantity ? `${quantity} un.` : "",
       ].filter(Boolean);
       detail.textContent = parts.length ? parts.join(" · ") : "Selecione produto e custos para estimar automaticamente.";
     }
+    updateBudgetPricingSummary(form, product ? pricing : emptyBudgetPricingSnapshot());
     updateBudgetTotalPreview(form);
   }
 
@@ -2418,19 +2904,58 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     if (!form) return;
     const rows = [...form.querySelectorAll("[data-budget-item-row]")];
     if (!rows.length) {
+      updateBudgetPricingSummary(form);
       updateBudgetTotalPreview(form);
       return;
     }
 
     let subtotal = 0;
+    let taxAmount = 0;
     const detailParts = [];
+    const pricingSnapshots = [];
     rows.forEach((row) => {
       const product = productRecord(row.querySelector('[name="item_product_id"]')?.value);
-      const substrate = substrateRecord(row.querySelector('[name="item_substrate_id"]')?.value);
       const quantityInput = row.querySelector('[name="item_quantity"]');
+      const hoursInput = row.querySelector('[name="item_estimated_hours"]');
+      const customHoursInput = row.querySelector('[name="item_custom_hours"]');
+      const hourlyRateInput = row.querySelector('[name="item_hourly_rate"]');
       const unitInput = row.querySelector('[name="item_unit_price"]');
+      const snapshotInput = row.querySelector('[name="item_product_snapshot_id"]');
       const quantity = Math.max(1, Number(quantityInput?.value || 1));
-      const estimate = calculateBudgetEstimate(product, substrate, 1);
+      const productChanged = product && snapshotInput && snapshotInput.value !== product.id;
+
+      if (productChanged) {
+        // Produto sugere. Orçamento decide: copiamos o preset para a linha e depois a linha vira snapshot editável.
+        const defaultHours = Number(product.hours_per_unit ?? product.estimated_hours ?? 0);
+        const defaultHourlyRate = Number(budgetFinancialSettings().hourly_rate || product.hourly_rate || 0);
+        const descriptionInput = row.querySelector('[name="item_description"]');
+        if (descriptionInput) descriptionInput.value = product.description || product.name || descriptionInput.value || "";
+        if (hoursInput) hoursInput.value = defaultHours ? String(defaultHours) : "";
+        if (customHoursInput) customHoursInput.value = defaultHours ? String(defaultHours) : "";
+        if (hourlyRateInput) hourlyRateInput.value = defaultHourlyRate ? defaultHourlyRate.toFixed(2) : "";
+        if (unitInput) unitInput.dataset.autoUnit = "true";
+
+        const substrateList = row.querySelector("[data-budget-item-substrate-list]");
+        if (substrateList) {
+          substrateList.innerHTML = budgetItemSubstratesFromProduct(product).map((entry) => renderBudgetItemSubstrateRow(entry)).join("");
+        }
+        snapshotInput.value = product.id;
+      }
+
+      if (customHoursInput && hoursInput && typeof document !== "undefined" && document.activeElement === hoursInput) {
+        customHoursInput.value = hoursInput.value;
+      }
+      if (hoursInput && customHoursInput && typeof document !== "undefined" && document.activeElement === customHoursInput) {
+        hoursInput.value = customHoursInput.value;
+      }
+
+      const hours = Math.max(0, Number(String(customHoursInput?.value || hoursInput?.value || "0").replace(",", ".")) || 0);
+      const hourlyRate = Math.max(0, Number(String(hourlyRateInput?.value || budgetFinancialSettings().hourly_rate || "0").replace(",", ".")) || 0);
+      const substrates = budgetItemSubstrateEntries(row);
+      const pricing = calculateCustomBudgetItemPricing({ quantity, hours, hourlyRate, substrates });
+      const billableSubtotal = pricing.subtotal + pricing.markupAmount;
+      const automaticUnitPrice = quantity ? billableSubtotal / quantity : billableSubtotal;
+      if (product || hours || substrates.length) pricingSnapshots.push(pricing);
       if (resetManualUnits && unitInput) {
         unitInput.dataset.autoUnit = "true";
       }
@@ -2438,31 +2963,50 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
         unitInput.dataset.autoUnit = "false";
       }
       const shouldWriteUnit = unitInput
-        && estimate.unitSubtotal > 0
+        && automaticUnitPrice > 0
         && (!unitInput.value || unitInput.dataset.autoUnit === "true" || (forceSubtotal && unitInput.dataset.autoUnit !== "false"));
       if (shouldWriteUnit) {
-        unitInput.value = estimate.unitSubtotal.toFixed(2);
+        unitInput.value = automaticUnitPrice.toFixed(2);
         unitInput.dataset.autoUnit = "true";
       }
       const unitPrice = decimalInputValue(unitInput?.value);
       const total = unitPrice * quantity;
+      const itemSnapshot = pricingSnapshotForBillableTotal(pricing, total);
       subtotal += total;
+      taxAmount += itemSnapshot.taxAmount;
       const totalNode = row.querySelector("[data-budget-item-total]");
       if (totalNode) totalNode.textContent = formatCurrency(total);
-      if (product || substrate) {
+      const rowSummary = row.querySelector("[data-budget-item-calc-summary]");
+      if (rowSummary) {
+        const strong = rowSummary.querySelector("strong");
+        const small = rowSummary.querySelector("small");
+        if (strong) strong.textContent = formatCurrency(total);
+        if (small) small.textContent = `${formatDecimalHours(itemSnapshot.laborHours)} totais · ${formatCurrency(itemSnapshot.laborCost)} mão de obra · ${formatCurrency(itemSnapshot.substrateCost)} substratos`;
+      }
+      if (product || hours || substrates.length) {
         detailParts.push([
           product ? product.name : "Item manual",
-          substrate ? substrate.name : "",
-          `${quantity} un.`,
-          formatCurrency(total),
+          `${formatDecimalHours(itemSnapshot.laborHours)} totais`,
+          substrates.length ? `${substrates.length} substrato(s)` : "",
+          `Total estimado ${formatCurrency(total)}`,
         ].filter(Boolean).join(" · "));
+      }
+      if (product || hours || substrates.length) {
+        pricingSnapshots[pricingSnapshots.length - 1] = itemSnapshot;
       }
     });
 
+    const pricingSnapshot = combineBudgetPricingSnapshots(pricingSnapshots);
+    const automaticSubtotal = pricingSnapshots.length ? pricingSnapshot.subtotal + pricingSnapshot.markupAmount : subtotal;
     const subtotalInput = form.elements.subtotal;
-    if (subtotalInput && subtotal > 0 && (forceSubtotal || !subtotalInput.value || subtotalInput.dataset.autoSubtotal === "true")) {
-      subtotalInput.value = subtotal.toFixed(2);
+    if (subtotalInput && (forceSubtotal || !subtotalInput.value || subtotalInput.dataset.autoSubtotal === "true")) {
+      subtotalInput.value = automaticSubtotal.toFixed(2);
       subtotalInput.dataset.autoSubtotal = "true";
+    }
+    const taxInput = form.elements.tax;
+    if (taxInput && (forceSubtotal || !taxInput.value || taxInput.dataset.autoTax === "true")) {
+      taxInput.value = taxAmount.toFixed(2);
+      taxInput.dataset.autoTax = "true";
     }
     const detail = form.querySelector("[data-budget-estimate-detail]");
     if (detail) {
@@ -2470,6 +3014,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
         ? detailParts.join(" | ")
         : "Adicione produtos, custos e quantidades para estimar automaticamente.";
     }
+    updateBudgetPricingSummary(form, pricingSnapshot);
     updateBudgetTotalPreview(form);
   }
 
@@ -2508,52 +3053,68 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     return number;
   }
 
-  function collectBudgetLineItems(data, errors) {
-    const descriptions = data.getAll("item_description");
-    const productIds = data.getAll("item_product_id");
-    const substrateIds = data.getAll("item_substrate_id");
-    const quantities = data.getAll("item_quantity");
-    const unitPrices = data.getAll("item_unit_price");
-    const maxLength = Math.max(descriptions.length, productIds.length, substrateIds.length, quantities.length, unitPrices.length);
+  function collectBudgetLineItems(form, errors) {
     const lineItems = [];
+    const rows = [...form.querySelectorAll("[data-budget-item-row]")];
 
-    for (let index = 0; index < maxLength; index += 1) {
-      const product = productRecord(String(productIds[index] || ""));
-      const substrate = substrateRecord(String(substrateIds[index] || ""));
-      const description = String(descriptions[index] || "").trim();
-      const hasAnyValue = description || product || substrate || String(unitPrices[index] || "").trim();
-      if (!hasAnyValue) continue;
+    rows.forEach((row) => {
+      const index = lineItems.length;
+      const product = productRecord(row.querySelector('[name="item_product_id"]')?.value);
+      const description = String(row.querySelector('[name="item_description"]')?.value || "").trim();
+      const proposalDescription = description;
+      const unitPriceRaw = row.querySelector('[name="item_unit_price"]')?.value;
+      const quantity = positiveQuantityFromRaw(row.querySelector('[name="item_quantity"]')?.value, `Quantidade do item ${index + 1}`, errors, 1);
+      const hours = nonNegativeNumberFromRaw(row.querySelector('[name="item_custom_hours"]')?.value || row.querySelector('[name="item_estimated_hours"]')?.value, `Horas do item ${index + 1}`, errors, 0);
+      const hourlyRate = nonNegativeNumberFromRaw(row.querySelector('[name="item_hourly_rate"]')?.value, `Valor/hora do item ${index + 1}`, errors, budgetFinancialSettings().hourly_rate);
+      const substrateEntries = budgetItemSubstrateEntries(row);
+      const hasAnyValue = description || proposalDescription || product || substrateEntries.length || String(unitPriceRaw || "").trim() || hours;
+      if (!hasAnyValue) return;
 
-      const quantity = positiveQuantityFromRaw(quantities[index], `Quantidade do item ${index + 1}`, errors, 1);
-      const estimate = calculateBudgetEstimate(product, substrate, 1);
-      const unitPrice = nonNegativeNumberFromRaw(unitPrices[index], `Preço unitário do item ${index + 1}`, errors, estimate.unitSubtotal || 0);
+      const pricing = calculateCustomBudgetItemPricing({ quantity, hours, hourlyRate, substrates: substrateEntries });
+      const automaticUnitPrice = quantity ? (pricing.subtotal + pricing.markupAmount) / quantity : pricing.subtotal + pricing.markupAmount;
+      const unitPrice = nonNegativeNumberFromRaw(unitPriceRaw, `Preço unitário do item ${index + 1}`, errors, automaticUnitPrice || 0);
       const total = unitPrice * quantity;
-      const title = description || product?.name || substrate?.name || `Item ${index + 1}`;
+      const itemSnapshot = pricingSnapshotForBillableTotal(pricing, total);
+      const autoUnit = roundMoney(unitPrice) === roundMoney(automaticUnitPrice);
+      const substratesUsed = substrateEntries.map((entry) => ({
+        id: entry.substrate.id,
+        name: entry.substrate.name,
+        cost: Number(entry.substrate.cost_amount ?? entry.substrate.unit_cost ?? 0),
+        quantity: entry.quantity,
+        acquisition_type: entry.substrate.acquisition_type || "unit_cost",
+        unit_cost: Number(entry.substrate.unit_cost ?? 0),
+        cost_amount: Number(entry.substrate.cost_amount ?? entry.substrate.unit_cost ?? 0),
+        pass_through_method: entry.substrate.pass_through_method || "none",
+        fixed_pass_through_amount: Number(entry.substrate.fixed_pass_through_amount ?? 0),
+        pass_through_percent: Number(entry.substrate.pass_through_percent ?? 0),
+        allocation_quantity: Number(entry.substrate.allocation_quantity ?? 0),
+      }));
+      const title = description || product?.name || substratesUsed.map((entry) => entry.name).join(", ") || `Item ${index + 1}`;
       lineItems.push({
         position: lineItems.length + 1,
         text: title,
         title,
         description: title,
+        proposalDescription: proposalDescription || title,
         productId: product?.id || "",
         productName: product?.name || "",
         productPricingModel: product?.pricing_model || "",
-        substrateId: substrate?.id || "",
-        substrateName: substrate?.name || "",
+        substrateId: substratesUsed[0]?.id || "",
+        substrateName: substratesUsed[0]?.name || "",
         quantity,
         unitPrice,
+        autoUnit,
         total,
-        baseAmount: estimate.baseAmount,
-        includedSubstrates: estimate.includedSubstrates.map((item) => ({
-          id: item.id,
-          name: item.name,
-          cost: Number(item.unit_cost || 0),
-        })),
-        additionalSubstrateCost: estimate.additionalSubstrates.reduce((sum, item) => sum + Number(item.unit_cost || 0), 0),
-        estimatedHours: Number(product?.estimated_hours || 0) * quantity,
-        hourlyRate: Number(product?.hourly_rate || 0),
-        markup: estimate.markupRate,
+        baseAmount: pricing.laborCost,
+        includedSubstrates: substratesUsed,
+        substratesUsed,
+        additionalSubstrateCost: pricing.substrateCost,
+        estimatedHours: itemSnapshot.laborHours,
+        hourlyRate: itemSnapshot.hourlyRate,
+        markup: itemSnapshot.markupPercent,
+        pricingSnapshot: itemSnapshot,
       });
-    }
+    });
 
     return lineItems;
   }
@@ -2586,6 +3147,14 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       maximumFractionDigits: 2,
       minimumFractionDigits: Number.isInteger(hours) ? 0 : 1,
     }).format(hours)} h`;
+  }
+
+  function formatDecimalNumber(value = 0) {
+    const number = Number(value || 0);
+    return new Intl.NumberFormat("pt-BR", {
+      maximumFractionDigits: 2,
+      minimumFractionDigits: Number.isInteger(number) ? 0 : 1,
+    }).format(number);
   }
 
   function formatPercent(value = 0) {
@@ -2632,6 +3201,15 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     state.modal = renderBudgetModal(budget);
     clearNotice();
     render();
+    if (!state.financialSettingsLoaded && !state.financialSettingsLoading && typeof loadFinancialSettings === "function") {
+      loadFinancialSettings()
+        .then(({ error } = {}) => {
+          if (error || typeof document === "undefined") return;
+          const form = document.querySelector("[data-budget-form]");
+          if (!budget && form) updateBudgetItemsEstimate(form);
+        })
+        .catch(() => {});
+    }
   }
 
   function openContactModal(clientId = "", contactId = "") {
@@ -2693,6 +3271,19 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const discount = Number(budget?.discount || 0);
     const tax = Number(budget?.tax || 0);
     const clientOptions = state.clients.map((client) => [client.id, client.name]);
+    const pricingSnapshot = budgetPricingSnapshot(budget);
+    const grossTotal = subtotal + tax;
+    const discountAmount = roundMoney(grossTotal * (discount / 100));
+    const finalTotal = roundMoney(grossTotal - discountAmount);
+    const validUntilValue = dateInputValue(budget?.valid_until) || defaultBudgetValidUntil();
+    const createdAtLabel = formatDateTime(budget?.created_at || new Date().toISOString());
+    const creatorLabel = budget?.created_by_email || editingPayload.createdByEmail || currentUserLabel();
+    const paymentMethod = editingPayload.paymentMethod || editingPayload.paymentTerms || "";
+    const paymentInstallments = editingPayload.paymentInstallments || "";
+    const deliveryDateValue = budgetDeliveryInputValue(editingPayload.deliveryTerms);
+    const discountReason = editingPayload.discountReason || "";
+    const discountReasonOther = editingPayload.discountReasonOther || "";
+    const hasDiscount = discount > 0;
 
     return `
       <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="${budget ? "Editar orçamento" : "Novo orçamento"}">
@@ -2705,10 +3296,25 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             <button class="icon-button" type="button" data-close-modal>Fechar</button>
           </div>
 
+          <section class="budget-identity-panel" aria-label="Identificação do orçamento">
+            <div>
+              <span>Número do orçamento</span>
+              <strong>Orçamento nº ${escapeHtml(budget ? budgetNumberLabel(budget) : String(nextBudgetNumberPreview()))}</strong>
+            </div>
+            <div>
+              <span>Data e hora de criação</span>
+              <strong>${escapeHtml(createdAtLabel)}</strong>
+            </div>
+            <div>
+              <span>Usuário criador</span>
+              <strong>${escapeHtml(creatorLabel)}</strong>
+            </div>
+          </section>
+
           <section class="budget-section">
             <div class="budget-section-heading">
               <strong>Ficha comercial</strong>
-              <span>Cliente, contato, vendedor e dados comerciais da proposta.</span>
+              <span>Dados essenciais da proposta.</span>
             </div>
             <label class="field field-span-2">
               <span>Título do serviço</span>
@@ -2731,17 +3337,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
               </label>
               <label class="field">
                 <span>Validade</span>
-                <input class="input" name="valid_until" type="date" value="${valueAttr(dateInputValue(budget?.valid_until))}">
-              </label>
-            </div>
-            <div class="form-grid">
-              <label class="field">
-                <span>Vendedor</span>
-                <input class="input" name="sales_owner" value="${valueAttr(editingPayload.salesOwner)}" placeholder="Responsável comercial">
-              </label>
-              <label class="field">
-                <span>Agência / indicação</span>
-                <input class="input" name="agency" value="${valueAttr(editingPayload.agency)}" placeholder="Opcional">
+                <input class="input" name="valid_until" type="date" value="${valueAttr(validUntilValue)}" readonly>
               </label>
             </div>
           </section>
@@ -2749,7 +3345,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           <section class="budget-section">
             <div class="budget-section-heading">
               <strong>Itens e cálculo</strong>
-              <span>Cada linha soma produto, custo extra, quantidade e preço unitário.</span>
+              <span>Produto sugere. Orçamento decide. Personalize apenas as exceções.</span>
             </div>
             <div class="budget-item-list" data-budget-item-list>
               ${renderBudgetItemRows(editingItems)}
@@ -2761,65 +3357,70 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             <div class="budget-estimate-detail" data-budget-estimate-detail>
               Adicione produtos, custos e quantidades para estimar automaticamente.
             </div>
-            <div class="form-grid">
-              <label class="field">
-                <span>Tipo geral</span>
-                <input class="input" name="service_type" value="${valueAttr(editingPayload.serviceType)}" placeholder="Website, branding, editorial...">
-              </label>
-              <label class="field">
-                <span>Resumo curto</span>
-                <input class="input" name="items_text" value="${valueAttr(budgetItemsText(budget))}" placeholder="Opcional, sobrescrito pelos itens calculados">
-              </label>
-            </div>
-            <label class="field">
-              <span>Resumo da proposta</span>
-              <textarea class="textarea textarea-small" name="summary" placeholder="Resumo comercial que aparece no PDF.">${escapeHtml(editingPayload.summary || "")}</textarea>
-            </label>
+            ${renderBudgetPricingSummary(pricingSnapshot)}
           </section>
 
           <section class="budget-section">
             <div class="budget-section-heading">
               <strong>Valores e condições</strong>
-              <span>Subtotal, desconto, impostos e observações que alimentam o PDF.</span>
+              <span>Condições comerciais que podem aparecer na proposta.</span>
             </div>
+            <input type="hidden" name="subtotal" value="${valueAttr(budget?.subtotal ?? "")}" data-budget-subtotal data-auto-subtotal="true">
+            <input type="hidden" name="tax" value="${valueAttr(budget?.tax ?? "")}" data-auto-tax="true">
             <div class="form-grid">
               <label class="field">
-                <span>Subtotal</span>
-                <input class="input" name="subtotal" type="number" min="0" step="0.01" placeholder="0.00" value="${valueAttr(budget?.subtotal ?? "")}" data-budget-money data-budget-subtotal>
+                <span>Desconto (%)</span>
+                <span class="affix-field">
+                  <input class="input" name="discount" type="number" min="0" max="100" step="0.01" placeholder="0" value="${valueAttr(budget?.discount ?? "")}" data-budget-money data-budget-discount-percent>
+                  <span class="field-affix" aria-hidden="true">%</span>
+                </span>
               </label>
-              <label class="field">
-                <span>Desconto</span>
-                <input class="input" name="discount" type="number" min="0" step="0.01" placeholder="0.00" value="${valueAttr(budget?.discount ?? "")}" data-budget-money>
+              <label class="field ${hasDiscount ? "" : "is-hidden"}" data-discount-reason-field>
+                <span>Justificativa do desconto</span>
+                <select class="select" name="discount_reason" data-discount-reason-select>
+                  ${selectOptions([["Pagamento no Pix", "Pagamento no Pix"], ["Permuta", "Permuta"], ["Promoção", "Promoção"], ["Indicação", "Indicação"], ["Outro", "Outro"]], discountReason, "Selecione")}
+                </select>
               </label>
             </div>
-            <div class="form-grid">
-              <label class="field">
-                <span>Impostos</span>
-                <input class="input" name="tax" type="number" min="0" step="0.01" placeholder="0.00" value="${valueAttr(budget?.tax ?? "")}" data-budget-money>
-              </label>
-              <div class="budget-total-preview" aria-live="polite">
+            <label class="field ${hasDiscount && discountReason === "Outro" ? "" : "is-hidden"}" data-discount-reason-other-field>
+              <span>Qual justificativa?</span>
+              <input class="input" name="discount_reason_other" value="${valueAttr(discountReasonOther)}" placeholder="Descreva a justificativa do desconto">
+            </label>
+            <div class="budget-final-summary" aria-live="polite">
+              <div>
                 <span>Total estimado</span>
-                <strong data-budget-total-preview-value>${formatCurrency(subtotal - discount + tax)}</strong>
+                <strong data-budget-gross-total>${formatCurrency(grossTotal)}</strong>
+              </div>
+              <div>
+                <span>Desconto aplicado</span>
+                <strong data-budget-discount-preview>${formatPercent(discount)} · ${formatCurrency(discountAmount)}</strong>
+              </div>
+              <div>
+                <span>Total final</span>
+                <strong data-budget-total-preview-value>${formatCurrency(finalTotal)}</strong>
               </div>
             </div>
             <div class="form-grid">
               <label class="field">
                 <span>Pagamento</span>
-                <input class="input" name="payment_terms" value="${valueAttr(editingPayload.paymentTerms)}" placeholder="Ex: 50% início / 50% entrega">
+                <select class="select" name="payment_method" data-payment-method-select>
+                  ${selectOptions([["Pix", "Pix"], ["Débito", "Débito"], ["Boleto", "Boleto"], ["Crédito à vista", "Crédito à vista"], ["Crédito parcelado", "Crédito parcelado"], ["Transferência", "Transferência"]], paymentMethod, "Selecione")}
+                </select>
+              </label>
+              <label class="field ${paymentMethod === "Crédito parcelado" ? "" : "is-hidden"}" data-payment-installments-field>
+                <span>Número de parcelas</span>
+                <select class="select" name="payment_installments">
+                  ${selectOptions(Array.from({ length: 11 }, (_, index) => {
+                    const value = `${index + 2}x`;
+                    return [value, value];
+                  }), paymentInstallments, "Selecione")}
+                </select>
               </label>
               <label class="field">
                 <span>Entrega</span>
-                <input class="input" name="delivery_terms" value="${valueAttr(editingPayload.deliveryTerms)}" placeholder="Ex: 20 dias úteis">
+                <input class="input" name="delivery_terms" type="date" value="${valueAttr(deliveryDateValue)}">
               </label>
             </div>
-            <label class="field">
-              <span>Observações</span>
-              <textarea class="textarea textarea-small" name="production_notes" placeholder="Dependências, arquivos do cliente, restrições e critérios de aceite.">${escapeHtml(editingPayload.productionNotes || "")}</textarea>
-            </label>
-            <label class="field">
-              <span>Notas internas</span>
-              <textarea class="textarea textarea-small" name="internal_notes" placeholder="Não aparece na proposta.">${escapeHtml(editingPayload.internalNotes || "")}</textarea>
-            </label>
           </section>
 
           ${renderCrmFormActions("budgets", budget, "Criar orçamento", "Salvar orçamento")}
@@ -2836,9 +3437,11 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   }
 
   function renderProductModal(product) {
+    const hoursPerUnit = Number(product?.hours_per_unit ?? product?.estimated_hours ?? 0);
+
     return `
       <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="${product ? "Editar produto" : "Novo produto"}">
-        <form class="modal form-stack" data-product-form ${crmFormAttrs("products")}>
+        <form class="modal modal-wide form-stack crm-editor-form" data-product-form ${crmFormAttrs("products")}>
           <div class="modal-header">
             <div>
               <span class="eyebrow">Produto</span>
@@ -2846,54 +3449,46 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             </div>
             <button class="icon-button" type="button" data-close-modal>Fechar</button>
           </div>
-          <div class="form-grid">
-            <label class="field">
-              <span>Nome</span>
-              <input class="input" name="name" value="${valueAttr(product?.name)}" required>
-            </label>
-            <label class="field">
-              <span>Categoria</span>
-              <input class="input" name="category" value="${valueAttr(product?.category)}" placeholder="Landing page, apresentação, social...">
-            </label>
-          </div>
-          <div class="form-grid">
-            <label class="field">
-              <span>Modelo de preço</span>
-              <select class="select" name="pricing_model">${selectOptions(PRODUCT_PRICING_MODELS, product?.pricing_model || "fixed")}</select>
-            </label>
-            <label class="field">
-              <span>Status</span>
-              <select class="select" name="status">${selectOptions([["active", "Ativo"], ["inactive", "Inativo"]], product?.status || "active")}</select>
-            </label>
-          </div>
-          <div class="form-grid">
-            <label class="field">
-              <span>Preço base</span>
-              <input class="input" name="base_price" type="number" min="0" step="0.01" value="${valueAttr(product?.base_price ?? "")}">
-            </label>
-            <label class="field">
-              <span>Horas estimadas</span>
-              <input class="input" name="estimated_hours" type="number" min="0" step="0.25" value="${valueAttr(product?.estimated_hours ?? "")}">
-            </label>
-          </div>
-          <div class="form-grid">
-            <label class="field">
-              <span>Valor/hora</span>
-              <input class="input" name="hourly_rate" type="number" min="0" step="0.01" value="${valueAttr(product?.hourly_rate ?? "")}" placeholder="0.00">
-            </label>
-            <label class="field">
-              <span>Markup padrão (%)</span>
-              <input class="input" name="default_markup" type="number" min="0" step="0.01" value="${valueAttr(product?.default_markup ?? "")}" placeholder="0.00">
-            </label>
-          </div>
-          <div class="field">
-            <span>Custos padrão</span>
+          <div class="crm-form-sections">
+            <section class="crm-form-section">
+              <span class="eyebrow">Produto</span>
+              <div class="crm-form-grid">
+                <label class="field field-span-2">
+                  <span>Nome</span>
+                  <input class="input" name="name" value="${valueAttr(product?.name)}" required>
+                </label>
+                <label class="field">
+                  <span>Categoria</span>
+                  <input class="input" name="category" value="${valueAttr(product?.category)}" placeholder="Landing page, apresentação, social...">
+                </label>
+                <label class="field">
+                  <span>Status</span>
+                  <select class="select" name="status">${selectOptions([["active", "Ativo"], ["inactive", "Inativo"]], product?.status || "active")}</select>
+                </label>
+              </div>
+            </section>
+            <section class="crm-form-section">
+              <span class="eyebrow">Base de cálculo</span>
+              <div class="crm-form-grid">
+                <label class="field field-span-2">
+                  <span>Horas padrão</span>
+                  <input class="input" name="hours_per_unit" type="number" min="0" step="0.25" value="${valueAttr(hoursPerUnit || "")}" placeholder="24">
+                </label>
+                <label class="field field-span-2">
+                  <span>Preço base</span>
+                  <input class="input" name="base_price" type="number" min="0" step="0.01" value="${valueAttr(product?.base_price ?? "")}" placeholder="0.00">
+                </label>
+              </div>
+            </section>
             ${renderProductSubstrateChoices(product)}
+            <section class="crm-form-section">
+              <span class="eyebrow">Descrição</span>
+              <label class="field">
+                <span>Descrição padrão</span>
+                <textarea class="textarea textarea-small" name="description" placeholder="Texto base copiado para o orçamento e ajustado por cliente/projeto.">${escapeHtml(product?.description || "")}</textarea>
+              </label>
+            </section>
           </div>
-          <label class="field">
-            <span>Descrição</span>
-            <textarea class="textarea textarea-small" name="description">${escapeHtml(product?.description || "")}</textarea>
-          </label>
           ${renderCrmFormActions("products", product, "Criar produto", "Salvar produto")}
         </form>
       </div>`;
@@ -2911,11 +3506,10 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const passThroughMethod = substratePassThroughMethod(substrate);
     const acquisitionType = substrateAcquisitionType(substrate);
     const costAmount = substrateCostAmount(substrate);
-    const costUnit = substrate?.cost_unit || substrate?.unit || "unidade";
 
     return `
       <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="${substrate ? "Editar substrato" : "Novo substrato"}">
-        <form class="modal modal-wide form-stack" data-substrate-form ${crmFormAttrs("substrates")}>
+        <form class="modal modal-wide form-stack crm-editor-form" data-substrate-form ${crmFormAttrs("substrates")}>
           <div class="modal-header">
             <div>
               <span class="eyebrow">Substrato</span>
@@ -2923,67 +3517,69 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             </div>
             <button class="icon-button" type="button" data-close-modal>Fechar</button>
           </div>
-          <label class="field">
-            <span>Nome</span>
-            <input class="input" name="name" value="${valueAttr(substrate?.name)}" required>
-          </label>
-          <div class="form-grid">
-            <label class="field">
-              <span>Tipo de aquisição</span>
-              <select class="select" name="acquisition_type">${selectOptions(SUBSTRATE_ACQUISITION_TYPES, acquisitionType)}</select>
-            </label>
-            <label class="field">
-              <span>Unidade</span>
-              <input class="input" name="cost_unit" value="${valueAttr(costUnit)}" placeholder="mês, ano, unidade, projeto, licença">
-            </label>
+          <div class="crm-form-sections">
+            <section class="crm-form-section">
+              <span class="eyebrow">Informações do substrato</span>
+              <div class="crm-form-grid">
+                <label class="field field-span-4">
+                  <span>Nome</span>
+                  <input class="input" name="name" value="${valueAttr(substrate?.name)}" required>
+                </label>
+              </div>
+            </section>
+            <section class="crm-form-section">
+              <span class="eyebrow">Precificação</span>
+              <div class="crm-form-grid">
+                <label class="field field-span-2">
+                  <span>Tipo de custo</span>
+                  <select class="select" name="acquisition_type">${selectOptions(SUBSTRATE_ACQUISITION_TYPES, acquisitionType)}</select>
+                </label>
+                <label class="field field-span-2">
+                  <span>Custo</span>
+                  <span class="affix-field">
+                    <span class="field-affix" aria-hidden="true">R$</span>
+                    <input class="input" name="cost_amount" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(costAmount || "")}" placeholder="70,00">
+                  </span>
+                </label>
+              </div>
+            </section>
+            <section class="crm-form-section">
+              <span class="eyebrow">Repasse</span>
+              <div class="crm-form-grid">
+                <label class="field field-span-2">
+                  <span>Repasse ao cliente</span>
+                  <select class="select" name="pass_through_method" data-substrate-pass-through-method>${selectOptions(SUBSTRATE_PASS_THROUGH_METHODS, passThroughMethod)}</select>
+                </label>
+                <label class="field field-span-2 ${passThroughMethod === "fixed" ? "" : "is-hidden"}" data-substrate-rule-field="fixed">
+                  <span>Valor fixo de repasse</span>
+                  <span class="affix-field">
+                    <span class="field-affix" aria-hidden="true">R$</span>
+                    <input class="input" name="fixed_pass_through_amount" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.fixed_pass_through_amount ?? "")}" placeholder="0,00">
+                  </span>
+                </label>
+                <label class="field field-span-2 ${passThroughMethod === "percent" ? "" : "is-hidden"}" data-substrate-rule-field="percent">
+                  <span>Percentual de repasse</span>
+                  <span class="affix-field">
+                    <input class="input" name="pass_through_percent" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.pass_through_percent ?? "")}" placeholder="100">
+                    <span class="field-affix" aria-hidden="true">%</span>
+                  </span>
+                </label>
+                <label class="field field-span-2 ${passThroughMethod === "allocated" ? "" : "is-hidden"}" data-substrate-rule-field="allocated">
+                  <span>Quantidade estimada para rateio</span>
+                  <input class="input" name="allocation_quantity" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.allocation_quantity ?? "")}" placeholder="10">
+                </label>
+              </div>
+            </section>
+            <section class="crm-form-section">
+              <span class="eyebrow">Controle</span>
+              <div class="crm-form-grid">
+                <label class="field field-span-2">
+                  <span>Status</span>
+                  <select class="select" name="status">${selectOptions([["active", "Ativo"], ["inactive", "Inativo"]], substrate?.status || "active")}</select>
+                </label>
+              </div>
+            </section>
           </div>
-          <div class="form-grid">
-            <label class="field">
-              <span>Custo</span>
-              <span class="affix-field">
-                <span class="field-affix" aria-hidden="true">R$</span>
-                <input class="input" name="cost_amount" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(costAmount || "")}" placeholder="70,00">
-              </span>
-            </label>
-            <label class="field">
-              <span>Método de repasse</span>
-              <select class="select" name="pass_through_method" data-substrate-pass-through-method>${selectOptions(SUBSTRATE_PASS_THROUGH_METHODS, passThroughMethod)}</select>
-            </label>
-          </div>
-          <div class="form-grid substrate-rule-grid">
-            <label class="field ${passThroughMethod === "fixed" ? "" : "is-hidden"}" data-substrate-rule-field="fixed">
-              <span>Valor fixo de repasse</span>
-              <span class="affix-field">
-                <span class="field-affix" aria-hidden="true">R$</span>
-                <input class="input" name="fixed_pass_through_amount" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.fixed_pass_through_amount ?? "")}" placeholder="0,00">
-              </span>
-            </label>
-            <label class="field ${passThroughMethod === "percent" ? "" : "is-hidden"}" data-substrate-rule-field="percent">
-              <span>Percentual de repasse</span>
-              <span class="affix-field">
-                <input class="input" name="pass_through_percent" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.pass_through_percent ?? "")}" placeholder="100">
-                <span class="field-affix" aria-hidden="true">%</span>
-              </span>
-            </label>
-            <label class="field ${passThroughMethod === "allocated" ? "" : "is-hidden"}" data-substrate-rule-field="allocated">
-              <span>Quantidade estimada para rateio</span>
-              <input class="input" name="allocation_quantity" type="number" min="0" step="0.01" inputmode="decimal" value="${valueAttr(substrate?.allocation_quantity ?? "")}" placeholder="10">
-            </label>
-          </div>
-          <div class="form-grid">
-            <label class="field">
-              <span>Status</span>
-              <select class="select" name="status">${selectOptions([["active", "Ativo"], ["inactive", "Inativo"]], substrate?.status || "active")}</select>
-            </label>
-            <label class="field">
-              <span>Classificação interna</span>
-              <input class="input" name="kind" value="${valueAttr(substrate?.kind)}" placeholder="Ferramenta, licença, mídia...">
-            </label>
-          </div>
-          <label class="field">
-            <span>Notas</span>
-            <textarea class="textarea textarea-small" name="notes">${escapeHtml(substrate?.notes || "")}</textarea>
-          </label>
           ${renderCrmFormActions("substrates", substrate, "Criar substrato", "Salvar substrato")}
         </form>
       </div>`;
@@ -3231,7 +3827,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             <section class="proposal-summary">
               <dl>
                 <div><dt>Subtotal</dt><dd>${formatCurrency(budget.subtotal)}</dd></div>
-                <div><dt>Desconto</dt><dd>${formatCurrency(budget.discount)}</dd></div>
+                <div><dt>Desconto</dt><dd>${budgetDiscountLabel(budget)}</dd></div>
                 <div><dt>Impostos</dt><dd>${formatCurrency(budget.tax)}</dd></div>
                 <div><dt>Total final</dt><dd>${formatCurrency(budget.total)}</dd></div>
               </dl>
@@ -3240,7 +3836,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
               <strong>Observações</strong>
               <p>${escapeHtml(payload.summary || payload.productionNotes || "Proposta válida conforme escopo descrito.")}</p>
               ${payload.paymentTerms ? `<p><strong>Pagamento:</strong> ${escapeHtml(payload.paymentTerms)}</p>` : ""}
-              ${payload.deliveryTerms ? `<p><strong>Entrega:</strong> ${escapeHtml(payload.deliveryTerms)}</p>` : ""}
+              ${payload.deliveryTerms ? `<p><strong>Entrega:</strong> ${escapeHtml(budgetDeliveryLabel(payload.deliveryTerms))}</p>` : ""}
             </section>
           </article>`;
   }
@@ -3394,14 +3990,14 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     ]));
     y = drawPdfTotals(doc, y + 14, [
       ["Subtotal", formatCurrency(budget.subtotal)],
-      ["Desconto", formatCurrency(budget.discount)],
+      ["Desconto", budgetDiscountLabel(budget)],
       ["Impostos", formatCurrency(budget.tax)],
       ["Total final", formatCurrency(budget.total)],
     ]);
     drawPdfNotes(doc, y + 18, "Observações", [
       payload.summary || payload.productionNotes || "Proposta válida conforme escopo descrito.",
       payload.paymentTerms ? `Pagamento: ${payload.paymentTerms}` : "",
-      payload.deliveryTerms ? `Entrega: ${payload.deliveryTerms}` : "",
+      payload.deliveryTerms ? `Entrega: ${budgetDeliveryLabel(payload.deliveryTerms)}` : "",
     ].filter(Boolean));
   }
 
@@ -3933,22 +4529,53 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const editing = crmEditRecord("products");
     const data = new FormData(form);
     const errors = [];
+    const productSubstrateLinks = collectProductSubstrateLinks(form, errors);
+    const financialSettings = budgetFinancialSettings();
+    const hoursPerUnit = nonNegativeNumberFromForm(data, "hours_per_unit", "Horas padrão", errors);
     const payload = {
       name: requiredTextFromForm(data, "name", "o nome do produto", errors),
       category: textFromForm(data, "category"),
       description: textFromForm(data, "description"),
       base_price: nonNegativeNumberFromForm(data, "base_price", "Preço base", errors),
-      estimated_hours: nonNegativeNumberFromForm(data, "estimated_hours", "Horas estimadas", errors),
-      default_markup: nonNegativeNumberFromForm(data, "default_markup", "Markup padrão", errors),
-      pricing_model: optionalFormValue(data, "pricing_model") || "fixed",
-      hourly_rate: nonNegativeNumberFromForm(data, "hourly_rate", "Valor/hora", errors),
-      default_substrate_ids: data.getAll("default_substrate_ids").map(String).filter(Boolean),
+      estimated_hours: hoursPerUnit,
+      production_unit: editing?.production_unit || "projeto",
+      hours_per_unit: hoursPerUnit,
+      default_quantity: 1,
+      default_markup: Number(financialSettings.default_markup_percent || 0),
+      pricing_model: editing?.pricing_model || "hourly",
+      hourly_rate: Number(financialSettings.hourly_rate || 0),
       status: String(data.get("status") || "active"),
     };
     if (!PRODUCT_PRICING_MODELS.some(([value]) => value === payload.pricing_model)) errors.push("Modelo de preço inválido.");
     if (!validateCrmPayload("products", errors)) return;
 
-    await submitCrmRecord("products", payload, editing, editing ? "Produto atualizado." : "Produto cadastrado.");
+    if (!supabase() || !isLoggedIn()) {
+      blockSubmitWithNotice("products", "Supabase indisponível. Tente novamente em instantes.");
+      return;
+    }
+
+    const noticeRoute = routeKey();
+    state.crmSubmitting = "products";
+    refreshSubmittingModal("products", editing);
+    renderProducts();
+
+    let error = null;
+    try {
+      const result = editing
+        ? await supabase().from("products").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", editing.id).select("id").single()
+        : await supabase().from("products").insert(payload).select("id").single();
+      error = result.error;
+
+      const productId = result.data?.id || editing?.id;
+      if (!error && productId) {
+        const linkResult = await saveProductSubstrateLinks(productId, productSubstrateLinks);
+        error = linkResult.error;
+      }
+    } catch (caught) {
+      error = caught;
+    }
+
+    await afterCrmMutation(error, editing ? "Produto atualizado." : "Produto cadastrado.", noticeRoute, "products", editing);
   }
 
   async function createSubstrate(form) {
@@ -3957,23 +4584,24 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const data = new FormData(form);
     const errors = [];
     const costAmount = nonNegativeNumberFromForm(data, "cost_amount", "Custo", errors);
+    const costUnit = editing?.cost_unit || editing?.unit || "unidade";
     const payload = {
       name: requiredTextFromForm(data, "name", "o nome do substrato", errors),
-      kind: textFromForm(data, "kind"),
+      kind: editing?.kind || "",
       acquisition_type: String(data.get("acquisition_type") || "unit_cost"),
-      unit: textFromForm(data, "cost_unit") || "unidade",
-      cost_unit: textFromForm(data, "cost_unit") || "unidade",
+      unit: costUnit,
+      cost_unit: costUnit,
       unit_cost: costAmount,
       cost_amount: costAmount,
       pass_through_method: String(data.get("pass_through_method") || "none"),
       fixed_pass_through_amount: nonNegativeNumberFromForm(data, "fixed_pass_through_amount", "Valor fixo de repasse", errors),
       pass_through_percent: nonNegativeNumberFromForm(data, "pass_through_percent", "Percentual de repasse", errors),
       allocation_quantity: nonNegativeNumberFromForm(data, "allocation_quantity", "Quantidade estimada para rateio", errors),
-      notes: textFromForm(data, "notes"),
+      notes: editing?.notes || "",
       status: String(data.get("status") || "active"),
     };
-    if (!SUBSTRATE_ACQUISITION_TYPES.some(([value]) => value === payload.acquisition_type)) errors.push("Tipo de aquisição inválido.");
-    if (!SUBSTRATE_PASS_THROUGH_METHODS.some(([value]) => value === payload.pass_through_method)) errors.push("Método de repasse inválido.");
+    if (!SUBSTRATE_ACQUISITION_TYPES.some(([value]) => value === payload.acquisition_type)) errors.push("Tipo de custo inválido.");
+    if (!SUBSTRATE_PASS_THROUGH_METHODS.some(([value]) => value === payload.pass_through_method)) errors.push("Repasse ao cliente inválido.");
     if (!validateCrmPayload("substrates", errors)) return;
 
     await submitCrmRecord("substrates", payload, editing, editing ? "Substrato atualizado." : "Substrato cadastrado.");
@@ -4004,72 +4632,105 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
 
   async function createBudget(form) {
     if (isSubmitting("budgets")) return;
+    if ((!state.financialSettingsLoaded || !state.financialSettings) && typeof loadFinancialSettings === "function") {
+      const { error } = await loadFinancialSettings();
+      if (error) {
+        blockSubmitWithNotice("budgets", error.message || "Não foi possível carregar as configurações financeiras.");
+        return;
+      }
+    }
     const editing = crmEditRecord("budgets");
     const data = new FormData(form);
     const errors = [];
-    const lineItems = collectBudgetLineItems(data, errors);
+    const lineItems = collectBudgetLineItems(form, errors);
     const firstLine = lineItems[0] || null;
     const selectedProduct = productRecord(firstLine?.productId || optionalFormValue(data, "product_id"));
     const selectedSubstrate = substrateRecord(firstLine?.substrateId || optionalFormValue(data, "substrate_id"));
     const quantity = firstLine?.quantity || optionalQuantityFromForm(data, errors) || 1;
-    const manualSubtotal = nonNegativeNumberFromForm(data, "subtotal", "Subtotal", errors);
     const discount = nonNegativeNumberFromForm(data, "discount", "Desconto", errors);
-    const tax = nonNegativeNumberFromForm(data, "tax", "Impostos", errors);
-    const estimate = calculateBudgetEstimate(selectedProduct, selectedSubstrate, quantity);
+    if (discount > 100) errors.push("Desconto não pode ser maior que 100%.");
+    const discountReason = optionalFormValue(data, "discount_reason");
+    const discountReasonOther = textFromForm(data, "discount_reason_other");
+    if (discount > 0 && !discountReason) errors.push("Selecione a justificativa do desconto.");
+    if (discount > 0 && discountReason === "Outro" && !discountReasonOther) errors.push("Descreva a justificativa do desconto.");
+    const paymentMethod = optionalFormValue(data, "payment_method");
+    const paymentInstallments = paymentMethod === "Crédito parcelado" ? optionalFormValue(data, "payment_installments") : "";
+    if (paymentMethod === "Crédito parcelado" && !paymentInstallments) errors.push("Selecione o número de parcelas.");
+    const deliveryDate = optionalDateFromForm(data, "delivery_terms", "Entrega", errors);
+    const pricingSnapshot = lineItems.length
+      ? combineBudgetPricingSnapshots(lineItems.map((item) => item.pricingSnapshot).filter(Boolean))
+      : selectedProduct
+        ? calculateBudgetPricing(selectedProduct, quantity, selectedSubstrate)
+        : emptyBudgetPricingSnapshot();
+    const automaticPricingSubtotal = pricingSnapshot.subtotal + pricingSnapshot.markupAmount;
     const automaticSubtotal = lineItems.length
-      ? lineItems.reduce((sum, item) => sum + Number(item.total || 0), 0)
-      : selectedProduct || selectedSubstrate ? estimate.subtotal : 0;
-    const subtotal = manualSubtotal || automaticSubtotal;
-    const total = subtotal - discount + tax;
+      ? lineItems.reduce((sum, item) => sum + Number(item.total || 0), 0) || automaticPricingSubtotal
+      : selectedProduct ? automaticPricingSubtotal : 0;
+    const subtotal = automaticSubtotal;
+    const tax = pricingSnapshot.taxAmount;
+    const grossTotal = roundMoney(subtotal + tax);
+    const discountAmount = roundMoney(grossTotal * (discount / 100));
+    const total = roundMoney(grossTotal - discountAmount);
     const itemsText = lineItems.length ? lineItems.map((item) => item.description || item.title).join("\n") : textFromForm(data, "items_text");
     const productNames = [...new Set(lineItems.map((item) => item.productName).filter(Boolean))];
     const previousPayload = budgetPayload(editing);
     const includedSubstrates = lineItems.length
       ? uniqueIncludedSubstrates(lineItems)
-      : estimate.includedSubstrates.map((substrate) => ({
-        id: substrate.id,
-        name: substrate.name,
-        cost: Number(substrate.unit_cost || 0),
+      : productPricingSubstrates(selectedProduct).map((entry) => ({
+        id: entry.substrate.id,
+        name: entry.substrate.name,
+        cost: Number(entry.substrate.cost_amount ?? entry.substrate.unit_cost ?? 0),
+        quantity: entry.quantity,
       }));
     const totalEstimatedHours = lineItems.length
       ? lineItems.reduce((sum, item) => sum + Number(item.estimatedHours || 0), 0)
-      : Number(selectedProduct?.estimated_hours || 0) * quantity;
+      : pricingSnapshot.laborHours;
     if (total < 0) errors.push("Total do orçamento não pode ficar negativo.");
     const itemTitle = firstLine?.description || selectedProduct?.name || optionalFormValue(data, "service_type") || textFromForm(data, "title") || "Serviço";
     const payload = {
       title: requiredTextFromForm(data, "title", "o título do orçamento", errors),
       client_id: optionalFormValue(data, "client_id"),
       contact_id: optionalFormValue(data, "contact_id"),
-      project_id: data.has("project_id") ? optionalFormValue(data, "project_id") : editing?.project_id || "",
+      project_id: data.has("project_id") ? optionalFormValue(data, "project_id") : editing?.project_id || null,
       status: data.has("status") ? String(data.get("status") || "draft") : editing?.status || "draft",
       currency: "BRL",
       subtotal,
       discount,
       tax,
       total,
-      valid_until: optionalDateFromForm(data, "valid_until", "Validade", errors),
+      ...budgetPricingSnapshotColumns(pricingSnapshot),
+      valid_until: optionalDateFromForm(data, "valid_until", "Validade", errors) || defaultBudgetValidUntil(),
       resolved: data.has("resolved") ? data.get("resolved") === "on" : Boolean(editing?.resolved),
+      created_by: editing?.created_by || state.session?.user?.id || null,
+      created_by_email: editing?.created_by_email || state.session?.user?.email || "",
       payload: {
         ...previousPayload,
         contact: data.has("contact") ? optionalFormValue(data, "contact") : previousPayload.contact || "",
-        salesOwner: optionalFormValue(data, "sales_owner"),
-        agency: optionalFormValue(data, "agency"),
+        salesOwner: data.has("sales_owner") ? optionalFormValue(data, "sales_owner") : previousPayload.salesOwner || "",
+        agency: data.has("agency") ? optionalFormValue(data, "agency") : previousPayload.agency || "",
         budgetFor: optionalFormValue(data, "budget_for") || "Cliente",
-        summary: textFromForm(data, "summary"),
-        serviceType: optionalFormValue(data, "service_type"),
+        summary: data.has("summary") ? textFromForm(data, "summary") : previousPayload.summary || "",
+        serviceType: data.has("service_type") ? optionalFormValue(data, "service_type") : previousPayload.serviceType || "",
         productId: selectedProduct?.id || optionalFormValue(data, "product_id"),
         productName: productNames.length > 1 ? `${productNames.length} produtos` : selectedProduct?.name || productNames[0] || null,
         productPricingModel: selectedProduct?.pricing_model || null,
-        productBaseAmount: lineItems.length ? lineItems.reduce((sum, item) => sum + Number(item.baseAmount || 0), 0) : estimate.baseAmount,
+        productBaseAmount: pricingSnapshot.laborCost,
         productEstimatedHours: totalEstimatedHours,
-        productHourlyRate: Number(firstLine?.hourlyRate || selectedProduct?.hourly_rate || 0),
-        productMarkup: estimate.markupRate,
+        productHourlyRate: pricingSnapshot.hourlyRate,
+        productMarkup: pricingSnapshot.markupPercent,
         substrateId: selectedSubstrate?.id || optionalFormValue(data, "substrate_id"),
         substrateName: selectedSubstrate?.name || firstLine?.substrateName || null,
         includedSubstrates,
         additionalSubstrateCost: lineItems.length
           ? lineItems.reduce((sum, item) => sum + Number(item.additionalSubstrateCost || 0), 0)
-          : estimate.additionalSubstrates.reduce((sum, substrate) => sum + Number(substrate.unit_cost || 0), 0),
+          : selectedSubstrate ? calculateBudgetPricing(null, 0, selectedSubstrate).substrateCost : 0,
+        pricingSnapshot,
+        grossTotal,
+        discountPercent: discount,
+        discountAmount,
+        discountReason: discount > 0 ? discountReason : "",
+        discountReasonOther: discount > 0 && discountReason === "Outro" ? discountReasonOther : "",
+        finalTotal: total,
         quantity,
         itemsText,
         lineItems,
@@ -4081,10 +4742,13 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           unitPrice: quantity ? subtotal / quantity : subtotal,
           total: subtotal,
         }],
-        paymentTerms: optionalFormValue(data, "payment_terms"),
-        deliveryTerms: optionalFormValue(data, "delivery_terms"),
-        productionNotes: textFromForm(data, "production_notes"),
-        internalNotes: textFromForm(data, "internal_notes"),
+        paymentTerms: paymentMethod,
+        paymentMethod,
+        paymentInstallments,
+        deliveryTerms: deliveryDate || previousPayload.deliveryTerms || "",
+        productionNotes: data.has("production_notes") ? textFromForm(data, "production_notes") : previousPayload.productionNotes || "",
+        createdByEmail: editing?.created_by_email || state.session?.user?.email || previousPayload.createdByEmail || "",
+        internalNotes: data.has("internal_notes") ? textFromForm(data, "internal_notes") : previousPayload.internalNotes || "",
         updatedFromAdminAt: new Date().toISOString(),
       },
     };
@@ -4148,9 +4812,12 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       total: Number(budget.total || 0),
       valid_until: budget.valid_until,
       resolved: false,
+      created_by: state.session?.user?.id || null,
+      created_by_email: state.session?.user?.email || "",
       payload: {
         ...budgetPayload(budget),
         duplicatedFrom: budget.id,
+        createdByEmail: state.session?.user?.email || "",
         updatedFromAdminAt: new Date().toISOString(),
       },
     }));
@@ -4438,6 +5105,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
 
   return {
     addBudgetItem,
+    addBudgetItemSubstrate,
     cancelCrmEdit,
     createBudget,
     createClient,
@@ -4481,6 +5149,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     selectAllVisibleOrders,
     syncBudgetContactOptions,
     removeBudgetItem,
+    removeBudgetItemSubstrate,
     updateBudgetEstimate,
     updateBudgetItemsEstimate,
     updateBudgetFilters,

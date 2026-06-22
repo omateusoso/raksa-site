@@ -73,6 +73,9 @@ create table if not exists public.products (
   description text not null default '',
   base_price numeric(12, 2) not null default 0,
   estimated_hours numeric(10, 2) not null default 0,
+  production_unit text not null default 'unidade',
+  hours_per_unit numeric(10, 2) not null default 0,
+  default_quantity numeric(10, 2) not null default 1,
   default_markup numeric(7, 4) not null default 0,
   pricing_model text not null default 'fixed',
   hourly_rate numeric(12, 2) not null default 0,
@@ -101,6 +104,19 @@ create table if not exists public.substrates (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists public.product_substrates (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products(id) on delete cascade,
+  substrate_id uuid not null references public.substrates(id) on delete restrict,
+  quantity numeric(12, 2) not null default 1,
+  is_required boolean not null default true,
+  notes text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint product_substrates_product_substrate_key unique (product_id, substrate_id),
+  constraint product_substrates_quantity_check check (quantity >= 0)
+);
+
 create table if not exists public.projects (
   id uuid primary key default gen_random_uuid(),
   client_id uuid references public.clients(id) on delete set null,
@@ -115,7 +131,7 @@ create table if not exists public.projects (
   updated_at timestamptz not null default now()
 );
 
-create sequence if not exists public.budgets_budget_number_seq start with 1001;
+create sequence if not exists public.budgets_budget_number_seq start with 210;
 
 create table if not exists public.budgets (
   id uuid primary key default gen_random_uuid(),
@@ -130,8 +146,22 @@ create table if not exists public.budgets (
   discount numeric(12, 2) not null default 0,
   tax numeric(12, 2) not null default 0,
   total numeric(12, 2) not null default 0,
+  quantity numeric(12, 2) not null default 0,
+  pricing_snapshot jsonb not null default '{}'::jsonb,
+  hourly_rate_snapshot numeric(12, 2) not null default 0,
+  markup_percent_snapshot numeric(7, 4) not null default 0,
+  tax_percent_snapshot numeric(7, 4) not null default 0,
+  labor_hours_snapshot numeric(12, 2) not null default 0,
+  labor_cost_snapshot numeric(12, 2) not null default 0,
+  substrate_cost_snapshot numeric(12, 2) not null default 0,
+  subtotal_snapshot numeric(12, 2) not null default 0,
+  markup_amount_snapshot numeric(12, 2) not null default 0,
+  tax_amount_snapshot numeric(12, 2) not null default 0,
+  total_snapshot numeric(12, 2) not null default 0,
   valid_until date,
   resolved boolean not null default false,
+  created_by uuid references auth.users(id) on delete set null,
+  created_by_email text not null default '',
   payload jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -209,6 +239,10 @@ alter table public.clients add column if not exists commission_rate numeric(5, 2
 alter table public.products add column if not exists pricing_model text not null default 'fixed';
 alter table public.products add column if not exists hourly_rate numeric(12, 2) not null default 0;
 alter table public.products add column if not exists default_substrate_ids jsonb not null default '[]'::jsonb;
+alter table public.products add column if not exists production_unit text not null default 'unidade';
+alter table public.products add column if not exists hours_per_unit numeric(10, 2) not null default 0;
+alter table public.products add column if not exists default_quantity numeric(10, 2) not null default 1;
+alter table public.products add column if not exists updated_at timestamptz not null default now();
 alter table public.substrates add column if not exists acquisition_type text not null default 'unit_cost';
 alter table public.substrates add column if not exists cost_amount numeric(12, 2) not null default 0;
 alter table public.substrates add column if not exists cost_unit text not null default 'unidade';
@@ -231,11 +265,44 @@ alter table public.financial_settings add column if not exists updated_at timest
 alter table public.budgets add column if not exists budget_number bigint;
 alter table public.budgets add column if not exists contact_id uuid references public.contacts(id) on delete set null;
 alter table public.budgets add column if not exists resolved boolean not null default false;
+alter table public.budgets add column if not exists quantity numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists pricing_snapshot jsonb not null default '{}'::jsonb;
+alter table public.budgets add column if not exists hourly_rate_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists markup_percent_snapshot numeric(7, 4) not null default 0;
+alter table public.budgets add column if not exists tax_percent_snapshot numeric(7, 4) not null default 0;
+alter table public.budgets add column if not exists labor_hours_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists labor_cost_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists substrate_cost_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists subtotal_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists markup_amount_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists tax_amount_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists total_snapshot numeric(12, 2) not null default 0;
+alter table public.budgets add column if not exists created_by uuid references auth.users(id) on delete set null;
+alter table public.budgets add column if not exists created_by_email text not null default '';
 alter table public.budgets alter column budget_number set default nextval('public.budgets_budget_number_seq');
 update public.budgets
 set budget_number = nextval('public.budgets_budget_number_seq')
 where budget_number is null;
 alter table public.budgets alter column budget_number set not null;
+with numbered as (
+  select id, row_number() over (order by created_at, id) + 209 as next_budget_number
+  from public.budgets
+)
+update public.budgets
+set budget_number = numbered.next_budget_number
+from numbered
+where public.budgets.id = numbered.id
+  and public.budgets.budget_number >= 1001;
+select setval(
+  'public.budgets_budget_number_seq',
+  greatest(coalesce((select max(budget_number) from public.budgets), 209), 209),
+  true
+);
+update public.budgets
+set discount = round((discount / nullif(subtotal + tax, 0)) * 100, 4)
+where discount > 0
+  and subtotal + tax > 0
+  and discount > 100;
 
 update public.substrates
 set
@@ -251,6 +318,14 @@ set
       then pass_through_method
     else 'none'
   end;
+
+update public.products
+set
+  production_unit = coalesce(nullif(production_unit, ''), 'unidade'),
+  hours_per_unit = coalesce(nullif(hours_per_unit, 0), estimated_hours, 0),
+  default_quantity = coalesce(nullif(default_quantity, 0), 1);
+
+alter table public.products drop constraint if exists products_pricing_model_check;
 
 do $$
 begin
@@ -323,7 +398,16 @@ begin
   ) then
     alter table public.products
       add constraint products_pricing_model_check
-      check (pricing_model in ('fixed', 'hourly', 'hybrid'));
+      check (pricing_model in ('fixed', 'unit', 'hourly', 'hybrid'));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.products'::regclass and conname = 'products_production_fields_nonnegative_check'
+  ) then
+    alter table public.products
+      add constraint products_production_fields_nonnegative_check
+      check (hours_per_unit >= 0 and default_quantity >= 0);
   end if;
 
   if not exists (
@@ -396,6 +480,24 @@ begin
 
   if not exists (
     select 1 from pg_constraint
+    where conrelid = 'public.product_substrates'::regclass and conname = 'product_substrates_product_substrate_key'
+  ) then
+    alter table public.product_substrates
+      add constraint product_substrates_product_substrate_key
+      unique (product_id, substrate_id);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.product_substrates'::regclass and conname = 'product_substrates_quantity_check'
+  ) then
+    alter table public.product_substrates
+      add constraint product_substrates_quantity_check
+      check (quantity >= 0);
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
     where conrelid = 'public.budgets'::regclass and conname = 'budgets_status_check'
   ) then
     alter table public.budgets
@@ -409,7 +511,7 @@ begin
   ) then
     alter table public.budgets
       add constraint budgets_amounts_nonnegative_check
-      check (subtotal >= 0 and discount >= 0 and tax >= 0 and total >= 0);
+      check (subtotal >= 0 and discount >= 0 and discount <= 100 and tax >= 0 and total >= 0);
   end if;
 
   if not exists (
@@ -418,7 +520,37 @@ begin
   ) then
     alter table public.budgets
       add constraint budgets_total_matches_parts_check
-      check (total = subtotal - discount + tax);
+      check (total = round((subtotal + tax) - ((subtotal + tax) * (discount / 100.0)), 2));
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.budgets'::regclass and conname = 'budgets_pricing_snapshot_object_check'
+  ) then
+    alter table public.budgets
+      add constraint budgets_pricing_snapshot_object_check
+      check (jsonb_typeof(pricing_snapshot) = 'object');
+  end if;
+
+  if not exists (
+    select 1 from pg_constraint
+    where conrelid = 'public.budgets'::regclass and conname = 'budgets_pricing_snapshots_nonnegative_check'
+  ) then
+    alter table public.budgets
+      add constraint budgets_pricing_snapshots_nonnegative_check
+      check (
+        quantity >= 0
+        and hourly_rate_snapshot >= 0
+        and markup_percent_snapshot >= 0
+        and tax_percent_snapshot >= 0
+        and labor_hours_snapshot >= 0
+        and labor_cost_snapshot >= 0
+        and substrate_cost_snapshot >= 0
+        and subtotal_snapshot >= 0
+        and markup_amount_snapshot >= 0
+        and tax_amount_snapshot >= 0
+        and total_snapshot >= 0
+      );
   end if;
 
   if not exists (
@@ -541,6 +673,32 @@ begin
   end if;
 end $$;
 
+insert into public.product_substrates (
+  product_id,
+  substrate_id,
+  quantity,
+  is_required
+)
+select
+  products.id,
+  substrate_ids.value::uuid,
+  1,
+  true
+from public.products
+cross join lateral jsonb_array_elements_text(
+  case
+    when jsonb_typeof(products.default_substrate_ids) = 'array' then products.default_substrate_ids
+    else '[]'::jsonb
+  end
+) as substrate_ids(value)
+where substrate_ids.value ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  and exists (
+    select 1
+    from public.substrates
+    where substrates.id = substrate_ids.value::uuid
+  )
+on conflict (product_id, substrate_id) do nothing;
+
 create or replace function public.touch_financial_settings_updated_at()
 returns trigger
 language plpgsql
@@ -558,6 +716,24 @@ create trigger financial_settings_touch_updated_at
   before update on public.financial_settings
   for each row
   execute function public.touch_financial_settings_updated_at();
+
+create or replace function public.touch_products_updated_at()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists products_touch_updated_at on public.products;
+create trigger products_touch_updated_at
+  before update on public.products
+  for each row
+  execute function public.touch_products_updated_at();
 
 create or replace function public.touch_substrates_updated_at()
 returns trigger
@@ -577,12 +753,32 @@ create trigger substrates_touch_updated_at
   for each row
   execute function public.touch_substrates_updated_at();
 
+create or replace function public.touch_product_substrates_updated_at()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists product_substrates_touch_updated_at on public.product_substrates;
+create trigger product_substrates_touch_updated_at
+  before update on public.product_substrates
+  for each row
+  execute function public.touch_product_substrates_updated_at();
+
 create index if not exists cases_client_id_idx on public.cases (client_id);
 create index if not exists contacts_client_id_idx on public.contacts (client_id);
 create index if not exists products_status_idx on public.products (status);
 create index if not exists products_category_idx on public.products (category);
 create index if not exists substrates_status_idx on public.substrates (status);
 create index if not exists substrates_kind_idx on public.substrates (kind);
+create index if not exists product_substrates_product_id_idx on public.product_substrates (product_id);
+create index if not exists product_substrates_substrate_id_idx on public.product_substrates (substrate_id);
 create index if not exists projects_client_id_idx on public.projects (client_id);
 create index if not exists projects_case_id_idx on public.projects (case_id);
 create unique index if not exists budgets_budget_number_key on public.budgets (budget_number);
@@ -615,6 +811,7 @@ alter table public.clients enable row level security;
 alter table public.contacts enable row level security;
 alter table public.products enable row level security;
 alter table public.substrates enable row level security;
+alter table public.product_substrates enable row level security;
 alter table public.projects enable row level security;
 alter table public.budgets enable row level security;
 alter table public.service_orders enable row level security;
@@ -632,6 +829,7 @@ drop policy if exists "Admins can manage clients" on public.clients;
 drop policy if exists "Admins can manage contacts" on public.contacts;
 drop policy if exists "Admins can manage products" on public.products;
 drop policy if exists "Admins can manage substrates" on public.substrates;
+drop policy if exists "Admins can manage product substrates" on public.product_substrates;
 drop policy if exists "Admins can manage projects" on public.projects;
 drop policy if exists "Admins can manage budgets" on public.budgets;
 drop policy if exists "Admins can manage service orders" on public.service_orders;
@@ -690,6 +888,11 @@ create policy "Admins can manage products"
 
 create policy "Admins can manage substrates"
   on public.substrates for all to authenticated
+  using (public.is_admin())
+  with check (public.is_admin());
+
+create policy "Admins can manage product substrates"
+  on public.product_substrates for all to authenticated
   using (public.is_admin())
   with check (public.is_admin());
 
@@ -769,6 +972,7 @@ revoke all privileges on table
   public.contacts,
   public.products,
   public.substrates,
+  public.product_substrates,
   public.projects,
   public.budgets,
   public.service_orders,
@@ -793,6 +997,7 @@ grant select, insert, update, delete on table
   public.contacts,
   public.products,
   public.substrates,
+  public.product_substrates,
   public.projects,
   public.budgets,
   public.service_orders,

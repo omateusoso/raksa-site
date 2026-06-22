@@ -16,9 +16,10 @@ export const FULL_CASE_COLUMNS = `${EXTENDED_CASE_COLUMNS}, external_url`;
 export const CLIENT_COLUMNS = "id, name, type, document, email, phone, website, status, billing_email, address, referral_source, commission_rate, notes, created_at, updated_at";
 export const CONTACT_COLUMNS = "id, client_id, name, role, email, phone, notes, created_at, updated_at";
 export const PROJECT_COLUMNS = "id, client_id, case_id, name, status, description, starts_at, due_at, budget_total, created_at, updated_at";
-export const PRODUCT_COLUMNS = "id, name, category, description, base_price, estimated_hours, default_markup, pricing_model, hourly_rate, default_substrate_ids, status, created_at, updated_at";
+export const PRODUCT_COLUMNS = "id, name, category, description, base_price, estimated_hours, production_unit, hours_per_unit, default_quantity, default_markup, pricing_model, hourly_rate, default_substrate_ids, status, created_at, updated_at";
 export const SUBSTRATE_COLUMNS = "id, name, kind, acquisition_type, unit, cost_unit, unit_cost, cost_amount, pass_through_method, fixed_pass_through_amount, pass_through_percent, allocation_quantity, notes, status, created_at, updated_at";
-export const BUDGET_COLUMNS = "id, budget_number, client_id, contact_id, project_id, title, status, currency, subtotal, discount, tax, total, valid_until, resolved, payload, created_at, updated_at";
+export const PRODUCT_SUBSTRATE_COLUMNS = "id, product_id, substrate_id, quantity, is_required, notes, created_at, updated_at";
+export const BUDGET_COLUMNS = "id, budget_number, client_id, contact_id, project_id, title, status, currency, subtotal, discount, tax, total, quantity, pricing_snapshot, hourly_rate_snapshot, markup_percent_snapshot, tax_percent_snapshot, labor_hours_snapshot, labor_cost_snapshot, substrate_cost_snapshot, subtotal_snapshot, markup_amount_snapshot, tax_amount_snapshot, total_snapshot, valid_until, resolved, created_by, created_by_email, payload, created_at, updated_at";
 export const SERVICE_ORDER_COLUMNS = "id, client_id, project_id, budget_id, title, status, scope, starts_at, due_at, recurrence, billing_cycle, estimated_hours, hourly_rate, created_at, updated_at";
 export const TIME_ENTRY_COLUMNS = "id, project_id, service_order_id, user_id, work_date, minutes, hourly_rate, description, billable, created_at, updated_at";
 export const METRIC_COLUMNS = "id, event_name, path, metadata, created_at";
@@ -78,6 +79,7 @@ export const ORDER_STATUSES = [
 
 export const PRODUCT_PRICING_MODELS = [
   ["fixed", "Preço fixo"],
+  ["unit", "Por unidade"],
   ["hourly", "Horas x valor/hora"],
   ["hybrid", "Fixo + horas"],
 ];
@@ -112,6 +114,7 @@ export const CRM_STATE_KEYS = {
   contacts: "contacts",
   projects: "projects",
   products: "products",
+  product_substrates: "productSubstrates",
   substrates: "substrates",
   budgets: "budgets",
   service_orders: "serviceOrders",
