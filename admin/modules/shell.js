@@ -1,7 +1,7 @@
 import { logo } from "./constants.js?v=9";
 import { escapeHtml } from "./utils.js?v=3";
 
-export function createShellModule({ app, state, getSupabase }) {
+export function createShellModule({ app, state, getSupabase, permissions = {} }) {
   function renderLogin(error = "") {
     const supabase = getSupabase();
     app.innerHTML = `
@@ -56,28 +56,36 @@ export function createShellModule({ app, state, getSupabase }) {
 
   function userProfile() {
     const user = state.session?.user || {};
-    const email = user.email || "";
-    const name = user.user_metadata?.name || user.user_metadata?.full_name || email.split("@")[0] || "Usuário";
-    const avatar = user.user_metadata?.avatar_url || user.user_metadata?.picture || "";
+    const internalProfile = permissions.getCurrentUserProfile?.(state) || {};
+    const email = internalProfile.email || user.email || "";
+    const name = internalProfile.display_name || internalProfile.full_name || user.user_metadata?.name || user.user_metadata?.full_name || email.split("@")[0] || "Usuário";
+    const avatar = internalProfile.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture || "";
     const initials = String(name || email || "U").trim().slice(0, 1).toUpperCase() || "U";
-    return { avatar, email, initials, name };
+    const role = internalProfile.role || internalProfile.access_level || "";
+    return { avatar, email, initials, name, role };
   }
 
   function renderProfileBlock({ compact = false } = {}) {
     const profile = userProfile();
     return `
-      <div class="${compact ? "sidebar-profile" : "platform-profile-card"}">
-        <a class="profile-view" href="#/home" aria-label="Ver perfil">
+      <details class="${compact ? "sidebar-profile" : "platform-profile-card"} profile-menu">
+        <summary class="profile-view" aria-label="Abrir menu do perfil">
           <span class="profile-avatar" aria-hidden="true">
             ${profile.avatar ? `<img src="${escapeHtml(profile.avatar)}" alt="">` : `<span>${escapeHtml(profile.initials)}</span>`}
           </span>
           <span class="profile-copy">
-            <strong>Ver perfil</strong>
-            <small>${escapeHtml(profile.email || profile.name)}</small>
+            <strong>${escapeHtml(profile.name)}</strong>
+            <small>${escapeHtml(profile.email || "")}</small>
+            <em>${escapeHtml(profile.role || "perfil")}</em>
           </span>
-        </a>
-        <button class="button button-ghost" type="button" data-logout>Log out</button>
-      </div>`;
+        </summary>
+        <div class="profile-menu-panel">
+          <a href="#/profile">Meu perfil</a>
+          <a href="#/profile/preferences">Preferências</a>
+          <a href="#/profile/security">Segurança</a>
+          <button type="button" data-logout>Sair</button>
+        </div>
+      </details>`;
   }
 
   function renderPlatformSidebar() {
@@ -97,7 +105,8 @@ export function createShellModule({ app, state, getSupabase }) {
       ["#/crm/substrates", "Substratos", crmTab === "substrates"],
     ];
     const settingsLinks = [
-      ["#/financeiro", "Financeiro", section === "financeiro"],
+      ...(permissions.canAccessSettings?.(state) ? [["#/financeiro", "Financeiro", section === "financeiro"]] : []),
+      ...(permissions.canManageUsers?.(state) ? [["#/users", "Usuários", section === "users"]] : []),
     ];
 
     return `
@@ -113,8 +122,7 @@ export function createShellModule({ app, state, getSupabase }) {
           ${commercialLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
           ${renderSidebarCategory("Precificação")}
           ${pricingLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
-          ${renderSidebarCategory("Configurações")}
-          ${settingsLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}
+          ${settingsLinks.length ? `${renderSidebarCategory("Configurações")}${settingsLinks.map(([href, label, active]) => renderSidebarLink(href, label, active)).join("")}` : ""}
         </nav>
         ${renderProfileBlock({ compact: true })}
       </aside>`;

@@ -1,4 +1,6 @@
 import {
+  ACTIVITY_LOG_COLUMNS,
+  ACTIVITY_LOGS_TABLE,
   ADMINS_TABLE,
   BASIC_CASE_COLUMNS,
   BUDGET_COLUMNS,
@@ -18,12 +20,18 @@ import {
   PRODUCT_SUBSTRATE_COLUMNS,
   PROJECT_COLUMNS,
   SERVICE_ORDER_COLUMNS,
+  SERVICE_ORDER_ITEM_COLUMNS,
   STORAGE_KEY,
   SUBSTRATE_COLUMNS,
   TAGS,
   TIME_ENTRY_COLUMNS,
-} from "./constants.js?v=14";
+  USER_PROFILE_COLUMNS,
+  USER_PROFILES_TABLE,
+} from "./constants.js?v=20";
+import { isSuperAdmin } from "./permissions.js?v=2";
 import { normalizeAssetUrl } from "./utils.js?v=3";
+
+const PROTECTED_SUPER_ADMIN_EMAILS = new Set(["davidraksa@live.com", "omateusosos@gmail.com"]);
 
 export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn }) {
   const DEFAULT_FINANCIAL_SETTINGS = {
@@ -137,6 +145,10 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
   function numberOrDefault(value, fallback) {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
+  }
+
+  function normalizeEmail(value = "") {
+    return String(value || "").trim().toLowerCase();
   }
 
   function normalizeFinancialSettings(row = {}) {
@@ -268,10 +280,359 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     if (!client) return;
     const { data } = await client.auth.getSession();
     state.session = data.session;
+    state.currentUserProfile = null;
     if (state.session && !(await isAdminUser())) {
       await client.auth.signOut();
       state.session = null;
+      state.currentUserProfile = null;
     }
+  }
+
+  function fallbackProfileForSession() {
+    const user = state.session?.user;
+    if (!user) return null;
+    const email = String(user.email || "").trim().toLowerCase();
+    const name = user.user_metadata?.name || user.user_metadata?.full_name || email.split("@")[0] || "";
+    const role = isSuperAdmin(state) ? "super_admin" : "viewer";
+    return {
+      auth_user_id: user.id,
+      email,
+      full_name: name,
+      display_name: name,
+      avatar_url: user.user_metadata?.avatar_url || user.user_metadata?.picture || "",
+      role,
+      access_level: role,
+      hierarchy_level: role === "super_admin" ? 100 : 10,
+      status: "active",
+      synthetic: true,
+    };
+  }
+
+  async function getCurrentUserProfile({ touchLastLogin = false } = {}) {
+    const client = supabase();
+    const user = state.session?.user;
+    if (!client || !user?.id) return null;
+
+    const email = String(user.email || "").trim().toLowerCase();
+    let { data, error } = await client
+      .from(USER_PROFILES_TABLE)
+      .select(USER_PROFILE_COLUMNS)
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+
+    if (error) {
+      console.warn("[RAKSA Admin] Perfil interno indisponivel.", error);
+      state.currentUserProfile = fallbackProfileForSession();
+      return state.currentUserProfile;
+    }
+
+    if (!data) {
+      const fallback = fallbackProfileForSession();
+      const insertResult = await client
+        .from(USER_PROFILES_TABLE)
+        .insert({
+          auth_user_id: user.id,
+          email,
+          full_name: fallback.full_name || "",
+          display_name: fallback.display_name || "",
+          avatar_url: fallback.avatar_url || "",
+          role: fallback.role,
+          access_level: fallback.access_level,
+          hierarchy_level: fallback.hierarchy_level,
+          status: "active",
+          last_login_at: touchLastLogin ? new Date().toISOString() : null,
+        })
+        .select(USER_PROFILE_COLUMNS)
+        .maybeSingle();
+
+      if (!insertResult.error && insertResult.data) data = insertResult.data;
+      else data = fallback;
+    } else if (touchLastLogin) {
+      const updateResult = await client
+        .from(USER_PROFILES_TABLE)
+        .update({
+          email: data.email || email,
+          last_login_at: new Date().toISOString(),
+        })
+        .eq("auth_user_id", user.id)
+        .select(USER_PROFILE_COLUMNS)
+        .maybeSingle();
+
+      if (!updateResult.error && updateResult.data) data = updateResult.data;
+    }
+
+    state.currentUserProfile = data || fallbackProfileForSession();
+    return state.currentUserProfile;
+  }
+
+  function normalizeUserProfile(row = {}) {
+    return {
+      ...row,
+      email: normalizeEmail(row.email),
+      full_name: row.full_name || "",
+      display_name: row.display_name || "",
+      avatar_url: row.avatar_url || "",
+      phone: row.phone || "",
+      whatsapp: row.whatsapp || "",
+      role: row.role || "viewer",
+      department: row.department || "",
+      hierarchy_level: numberOrDefault(row.hierarchy_level, 10),
+      access_level: row.access_level || row.role || "viewer",
+      employment_type: row.employment_type || "",
+      status: row.status || "pending",
+      weekly_hours: numberOrDefault(row.weekly_hours, 0),
+      internal_hourly_rate: numberOrDefault(row.internal_hourly_rate, 0),
+      monthly_cost: numberOrDefault(row.monthly_cost, 0),
+      productive_hours_goal: numberOrDefault(row.productive_hours_goal, 0),
+      internal_notes: row.internal_notes || "",
+      preferences: {
+        theme: "dark",
+        density: "comfortable",
+        home_page: "home",
+        notifications: true,
+        timezone: "America/Sao_Paulo",
+        ...(row.preferences || {}),
+      },
+    };
+  }
+
+  function userProfilePayload(payload = {}) {
+    const email = normalizeEmail(payload.email);
+    const role = String(payload.role || payload.access_level || "viewer").trim() || "viewer";
+    return {
+      full_name: String(payload.full_name || "").trim(),
+      display_name: String(payload.display_name || payload.full_name || "").trim(),
+      email,
+      phone: String(payload.phone || "").trim(),
+      whatsapp: String(payload.whatsapp || "").trim(),
+      role,
+      department: String(payload.department || "").trim(),
+      hierarchy_level: numberOrDefault(payload.hierarchy_level, 10),
+      access_level: String(payload.access_level || role).trim() || role,
+      employment_type: String(payload.employment_type || "").trim(),
+      status: String(payload.status || "pending").trim(),
+      supervisor_id: payload.supervisor_id || null,
+      weekly_hours: numberOrDefault(payload.weekly_hours, 0),
+      internal_hourly_rate: numberOrDefault(payload.internal_hourly_rate, 0),
+      monthly_cost: numberOrDefault(payload.monthly_cost, 0),
+      productive_hours_goal: numberOrDefault(payload.productive_hours_goal, 0),
+      internal_notes: String(payload.internal_notes || "").trim(),
+      updated_by: state.session?.user?.id || null,
+    };
+  }
+
+  async function loadUserProfiles({ force = false } = {}) {
+    const client = supabase();
+    if (!client || !isLoggedIn()) return { data: [], error: new Error("Supabase indisponivel.") };
+    if (state.userProfilesLoaded && !force) return { data: state.userProfiles, error: null };
+    if (state.userProfilesLoading) return { data: state.userProfiles || [], error: null };
+
+    state.userProfilesLoading = true;
+    const result = await client
+      .from(USER_PROFILES_TABLE)
+      .select(USER_PROFILE_COLUMNS)
+      .order("full_name", { ascending: true });
+
+    state.userProfilesLoading = false;
+    if (result.error) return { data: [], error: result.error };
+
+    state.userProfiles = (result.data || []).map(normalizeUserProfile);
+    state.userProfilesLoaded = true;
+    return { data: state.userProfiles, error: null };
+  }
+
+  async function createUserProfile(payload = {}) {
+    const client = supabase();
+    if (!client || !isLoggedIn()) return { data: null, error: new Error("Supabase indisponivel.") };
+    const record = userProfilePayload(payload);
+    if (!record.full_name || !record.email) return { data: null, error: new Error("Nome completo e e-mail são obrigatórios.") };
+
+    const duplicate = await client
+      .from(USER_PROFILES_TABLE)
+      .select("id, email")
+      .ilike("email", record.email)
+      .maybeSingle();
+    if (duplicate.data) return { data: null, error: new Error("Já existe um perfil com este e-mail.") };
+    if (duplicate.error && duplicate.error.code !== "PGRST116") return { data: null, error: duplicate.error };
+
+    const functionPayload = {
+      ...record,
+      created_by: state.session?.user?.id || null,
+    };
+    const functionResult = await client.functions.invoke("create-user", { body: functionPayload });
+    if (!functionResult.error && functionResult.data?.profile) {
+      state.userProfilesLoaded = false;
+      return { data: normalizeUserProfile(functionResult.data.profile), error: null };
+    }
+
+    const pendingRecord = {
+      ...record,
+      auth_user_id: null,
+      status: record.status === "active" ? "pending" : record.status,
+      created_by: state.session?.user?.id || null,
+      internal_notes: [
+        record.internal_notes,
+        "Auth pendente: deploy/configure a Edge Function supabase/functions/create-user para criar o usuário no Supabase Auth com service role no backend.",
+      ].filter(Boolean).join("\n\n"),
+    };
+
+    const insertResult = await client
+      .from(USER_PROFILES_TABLE)
+      .insert(pendingRecord)
+      .select(USER_PROFILE_COLUMNS)
+      .single();
+
+    if (!insertResult.error) state.userProfilesLoaded = false;
+    return {
+      data: insertResult.data ? normalizeUserProfile(insertResult.data) : null,
+      error: insertResult.error,
+      authPending: !insertResult.error,
+      edgeFunctionError: functionResult.error,
+    };
+  }
+
+  async function saveUserProfile(id, payload = {}) {
+    const client = supabase();
+    if (!client || !isLoggedIn()) return { data: null, error: new Error("Supabase indisponivel.") };
+    const current = state.userProfiles?.find((item) => item.id === id);
+    const email = normalizeEmail(current?.email || payload.email);
+    if (PROTECTED_SUPER_ADMIN_EMAILS.has(email) && !isSuperAdmin(state)) {
+      const nextRole = String(payload.role || current?.role || "").toLowerCase();
+      const nextAccess = String(payload.access_level || current?.access_level || "").toLowerCase();
+      const nextLevel = numberOrDefault(payload.hierarchy_level, current?.hierarchy_level || 0);
+      const nextStatus = String(payload.status || current?.status || "").toLowerCase();
+      if (nextRole !== "super_admin" || nextAccess !== "super_admin" || nextLevel < 100 || nextStatus !== "active") {
+        return { data: null, error: new Error("Somente super_admin pode alterar o acesso raiz deste usuário.") };
+      }
+    }
+
+    const result = await client
+      .from(USER_PROFILES_TABLE)
+      .update(userProfilePayload(payload))
+      .eq("id", id)
+      .select(USER_PROFILE_COLUMNS)
+      .single();
+
+    if (!result.error) state.userProfilesLoaded = false;
+    return {
+      data: result.data ? normalizeUserProfile(result.data) : null,
+      error: result.error,
+    };
+  }
+
+  async function setUserProfileStatus(id, status) {
+    const current = state.userProfiles?.find((item) => item.id === id);
+    return saveUserProfile(id, { ...current, status });
+  }
+
+  async function saveOwnProfile(payload = {}) {
+    const client = supabase();
+    const id = state.currentUserProfile?.id;
+    if (!client || !isLoggedIn() || !id) return { data: null, error: new Error("Perfil indisponível.") };
+
+    const record = {
+      full_name: String(payload.full_name || "").trim(),
+      display_name: String(payload.display_name || payload.full_name || "").trim(),
+      cpf: String(payload.cpf || "").trim(),
+      birth_date: payload.birth_date || null,
+      phone: String(payload.phone || "").trim(),
+      whatsapp: String(payload.whatsapp || "").trim(),
+      address: String(payload.address || "").trim(),
+      city: String(payload.city || "").trim(),
+      state: String(payload.state || "").trim(),
+      zip_code: String(payload.zip_code || "").trim(),
+    };
+
+    const result = await client
+      .from(USER_PROFILES_TABLE)
+      .update(record)
+      .eq("id", id)
+      .select(USER_PROFILE_COLUMNS)
+      .single();
+
+    if (!result.error && result.data) state.currentUserProfile = normalizeUserProfile(result.data);
+    return {
+      data: result.data ? normalizeUserProfile(result.data) : null,
+      error: result.error,
+    };
+  }
+
+  async function saveOwnPreferences(preferences = {}) {
+    const client = supabase();
+    const id = state.currentUserProfile?.id;
+    if (!client || !isLoggedIn() || !id) return { data: null, error: new Error("Perfil indisponível.") };
+    const nextPreferences = {
+      ...(state.currentUserProfile?.preferences || {}),
+      theme: String(preferences.theme || "dark"),
+      density: String(preferences.density || "comfortable"),
+      home_page: String(preferences.home_page || "home"),
+      notifications: Boolean(preferences.notifications),
+      timezone: String(preferences.timezone || "America/Sao_Paulo"),
+    };
+
+    const result = await client
+      .from(USER_PROFILES_TABLE)
+      .update({
+        preferences: nextPreferences,
+      })
+      .eq("id", id)
+      .select(USER_PROFILE_COLUMNS)
+      .single();
+
+    if (!result.error && result.data) state.currentUserProfile = normalizeUserProfile(result.data);
+    return {
+      data: result.data ? normalizeUserProfile(result.data) : null,
+      error: result.error,
+    };
+  }
+
+  async function loadActivityLogs({ limit = 50 } = {}) {
+    const client = supabase();
+    if (!client || !isLoggedIn()) return { data: [], error: new Error("Supabase indisponivel.") };
+    const result = await client
+      .from(ACTIVITY_LOGS_TABLE)
+      .select(ACTIVITY_LOG_COLUMNS)
+      .eq("user_id", state.session.user.id)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (!result.error) {
+      state.activityLogs = result.data || [];
+      state.activityLogsLoaded = true;
+    }
+    return { data: result.data || [], error: result.error };
+  }
+
+  async function logActivity(action, module, entityType = "", entityId = "", description = "", oldValue = null, newValue = null) {
+    const client = supabase();
+    if (!client || !isLoggedIn() || !state.session?.user?.id) return { data: null, error: null };
+    const result = await client
+      .from(ACTIVITY_LOGS_TABLE)
+      .insert({
+        user_id: state.session.user.id,
+        action: String(action || "").trim(),
+        module: String(module || "").trim(),
+        entity_type: String(entityType || "").trim(),
+        entity_id: String(entityId || "").trim(),
+        description: String(description || "").trim(),
+        old_value: oldValue,
+        new_value: newValue,
+        user_agent: navigator.userAgent || "",
+      })
+      .select(ACTIVITY_LOG_COLUMNS)
+      .single();
+
+    if (!result.error && result.data) {
+      state.activityLogs = [result.data, ...(state.activityLogs || [])].slice(0, 50);
+      state.activityLogsLoaded = true;
+    }
+    return result;
+  }
+
+  async function updateCurrentUserPassword(password) {
+    const client = supabase();
+    if (!client || !isLoggedIn()) return { data: null, error: new Error("Supabase indisponivel.") };
+    return client.auth.updateUser({ password });
   }
 
   async function loadAdminData({ force = false } = {}) {
@@ -279,7 +640,7 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     if (!client || !isLoggedIn() || (state.crmLoaded && !force) || state.crmLoading) return;
     state.crmLoading = true;
 
-    const [clients, contacts, projects, products, productSubstrates, substrates, budgets, serviceOrders, timeEntries, metricsEvents] = await Promise.all([
+    const [clients, contacts, projects, products, productSubstrates, substrates, budgets, serviceOrders, serviceOrderItems, timeEntries, metricsEvents] = await Promise.all([
       client.from("clients").select(CLIENT_COLUMNS).order("name", { ascending: true }),
       client.from("contacts").select(CONTACT_COLUMNS).order("name", { ascending: true }),
       client.from("projects").select(PROJECT_COLUMNS).order("created_at", { ascending: false }),
@@ -288,12 +649,13 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
       client.from("substrates").select(SUBSTRATE_COLUMNS).order("name", { ascending: true }),
       client.from("budgets").select(BUDGET_COLUMNS).order("budget_number", { ascending: false }).order("created_at", { ascending: false }),
       client.from("service_orders").select(SERVICE_ORDER_COLUMNS).order("created_at", { ascending: false }),
+      client.from("service_order_items").select(SERVICE_ORDER_ITEM_COLUMNS).order("position", { ascending: true }).order("created_at", { ascending: true }),
       client.from("time_entries").select(TIME_ENTRY_COLUMNS).order("work_date", { ascending: false }).limit(300),
       client.from("metrics_events").select(METRIC_COLUMNS).order("created_at", { ascending: false }).limit(500),
     ]);
 
     state.crmLoading = false;
-    const error = [clients, contacts, projects, products, productSubstrates, substrates, budgets, serviceOrders, timeEntries, metricsEvents].find((result) => result.error)?.error;
+    const error = [clients, contacts, projects, products, productSubstrates, substrates, budgets, serviceOrders, serviceOrderItems, timeEntries, metricsEvents].find((result) => result.error)?.error;
     if (error) {
       console.warn("[RAKSA Admin] CRM indisponivel.", error);
       return;
@@ -307,6 +669,7 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     state.substrates = substrates.data || [];
     state.budgets = budgets.data || [];
     state.serviceOrders = serviceOrders.data || [];
+    state.serviceOrderItems = serviceOrderItems.data || [];
     state.timeEntries = timeEntries.data || [];
     state.metricsEvents = metricsEvents.data || [];
     state.crmLoaded = true;
@@ -315,6 +678,8 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
   async function isAdminUser() {
     const client = supabase();
     if (!client || !state.session?.user?.id) return false;
+    state.currentUserProfile = fallbackProfileForSession();
+    if (isSuperAdmin(state)) return true;
 
     const { data, error } = await client
       .from(ADMINS_TABLE)
@@ -322,7 +687,13 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
       .eq("user_id", state.session.user.id)
       .maybeSingle();
 
-    return !error && Boolean(data);
+    if (!error && data) {
+      await getCurrentUserProfile();
+      return true;
+    }
+
+    const profile = await getCurrentUserProfile();
+    return isSuperAdmin(state) || (profile?.status === "active" && !profile.synthetic);
   }
 
   function fromSupabaseCase(row) {
@@ -493,9 +864,19 @@ export function createApiModule({ state, supabaseConfig, getSupabase, isLoggedIn
     loadCases,
     loadFinancialSettings,
     loadSession,
+    loadActivityLogs,
+    loadUserProfiles,
+    logActivity,
+    getCurrentUserProfile,
     persistCase,
     persistCases,
     saveFinancialSettings,
+    saveOwnPreferences,
+    saveOwnProfile,
+    createUserProfile,
+    saveUserProfile,
     seedCasesIfEmpty,
+    setUserProfileStatus,
+    updateCurrentUserPassword,
   };
 }

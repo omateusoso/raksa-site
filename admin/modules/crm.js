@@ -10,7 +10,7 @@ import {
   PROJECT_STATUSES,
   SUBSTRATE_ACQUISITION_TYPES,
   SUBSTRATE_PASS_THROUGH_METHODS,
-} from "./constants.js?v=14";
+} from "./constants.js?v=17";
 import { calculateProductPricing, roundMoney } from "./pricingEngine.js?v=1";
 import { calculateAppliedSubstrateCost } from "./substratePricing.js?v=1";
 import {
@@ -35,6 +35,24 @@ import {
 } from "./utils.js?v=3";
 
 export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, clearNotice, render, renderShell, loadAdminData, loadFinancialSettings }) {
+  const ORDER_PRIORITIES = [
+    ["normal", "Normal"],
+    ["high", "Alta"],
+    ["urgent", "Urgente"],
+    ["low", "Baixa"],
+  ];
+  const PAYMENT_STATUSES = [
+    ["pending", "Pendente"],
+    ["scheduled", "Previsto"],
+    ["paid", "Pago"],
+    ["overdue", "Atrasado"],
+  ];
+  const BILLING_TYPES = [
+    ["company", "Pessoa jurídica"],
+    ["person", "Pessoa física"],
+    ["foreign", "Exterior"],
+  ];
+
   function supabase() {
     return getSupabase();
   }
@@ -65,6 +83,18 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           ${submitting ? `<span class="spinner" aria-hidden="true"></span><span>Salvando...</span>` : escapeHtml(label)}
         </button>
         ${record ? `<button class="button button-secondary" type="button" data-cancel-crm-edit ${submitting ? "disabled" : ""}>Cancelar edição</button>` : ""}
+      </div>`;
+  }
+
+  function renderOrderFormActions(order) {
+    const submitting = isSubmitting("service_orders");
+    const label = order?.id ? "Salvar OS" : "Criar OS";
+    return `
+      <div class="form-actions">
+        <button class="button button-primary ${submitting ? "is-loading" : ""}" type="submit" ${submitting ? "disabled" : ""}>
+          ${submitting ? `<span class="spinner" aria-hidden="true"></span><span>Salvando...</span>` : escapeHtml(label)}
+        </button>
+        ${order?.id ? `<button class="button button-secondary" type="button" data-cancel-crm-edit ${submitting ? "disabled" : ""}>Cancelar edição</button>` : ""}
       </div>`;
   }
 
@@ -137,23 +167,24 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
 
   function renderPlatformProfile() {
     const user = state.session?.user || {};
-    const email = user.email || "";
-    const name = user.user_metadata?.name || user.user_metadata?.full_name || email.split("@")[0] || "Usuário";
-    const avatar = user.user_metadata?.avatar_url || user.user_metadata?.picture || "";
+    const profile = state.currentUserProfile || {};
+    const email = profile.email || user.email || "";
+    const name = profile.display_name || profile.full_name || user.user_metadata?.name || user.user_metadata?.full_name || email.split("@")[0] || "Usuário";
+    const avatar = profile.avatar_url || user.user_metadata?.avatar_url || user.user_metadata?.picture || "";
     const initials = String(name || email || "U").trim().slice(0, 1).toUpperCase() || "U";
 
     return `
       <section class="platform-home-profile" aria-label="Perfil">
-        <a class="profile-view" href="#/home" aria-label="Ver perfil">
+        <a class="profile-view" href="#/profile" aria-label="Ver perfil">
           <span class="profile-avatar" aria-hidden="true">
             ${avatar ? `<img src="${escapeHtml(avatar)}" alt="">` : `<span>${escapeHtml(initials)}</span>`}
           </span>
           <span class="profile-copy">
-            <strong>Ver perfil</strong>
-            <small>${escapeHtml(email || name)}</small>
+            <strong>${escapeHtml(name)}</strong>
+            <small>${escapeHtml(email || "Meu perfil")}</small>
           </span>
         </a>
-        <button class="button button-ghost" type="button" data-logout>Log out</button>
+        <button class="button button-ghost" type="button" data-logout>Sair</button>
       </section>`;
   }
 
@@ -221,9 +252,10 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     return `
       <div class="dashboard-list">
         ${items.map((order) => `
-          <a class="dashboard-list-row" href="#/crm/orders" aria-label="Abrir OS ${escapeHtml(order.title)}">
+          <a class="dashboard-list-row" href="#/crm/orders" aria-label="Abrir ${escapeHtml(serviceOrderDisplayName(order))}">
             <div>
-              <strong>${escapeHtml(order.title || "Sem título")}</strong>
+              <strong>${escapeHtml(serviceOrderNumberLabel(order))}</strong>
+              <span>${escapeHtml(order.title || "Sem título")}</span>
               <span>${escapeHtml(entityName(state.clients, order.client_id))} · ${escapeHtml(entityName(state.projects, order.project_id))}</span>
             </div>
             <div>
@@ -1881,6 +1913,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
 
   function orderSearchText(order) {
     return [
+      serviceOrderNumberLabel(order),
       order.title,
       scopeText(order.scope),
       orderBudgetLabel(order),
@@ -1912,6 +1945,12 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   function budgetNumberLabel(budget) {
     if (budget?.budget_number) return String(budget.budget_number);
     return budget?.id ? `TMP-${String(budget.id).slice(0, 8)}` : "Automático";
+  }
+
+  function budgetShortReferenceLabel(budget) {
+    if (!budget) return "-";
+    const label = budgetNumberLabel(budget);
+    return budget.budget_number ? `#${String(label).replace(/^#/, "")}` : label;
   }
 
   function currentUserLabel() {
@@ -1992,6 +2031,20 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     return budget ? `${budgetNumberLabel(budget)} · ${budget.title}` : "-";
   }
 
+  function nextServiceOrderNumberPreview() {
+    const numbers = state.serviceOrders.map((order) => Number(order.order_number || 0)).filter(Boolean);
+    return Math.max(999, ...numbers) + 1;
+  }
+
+  function serviceOrderNumberLabel(order) {
+    const number = Number(order?.order_number || 0) || (order?.id ? 0 : nextServiceOrderNumberPreview());
+    return number ? `OS #${number}` : "OS";
+  }
+
+  function serviceOrderDisplayName(order) {
+    return [serviceOrderNumberLabel(order), order?.title].filter(Boolean).join(" · ");
+  }
+
   function orderRecurrenceLabel(order) {
     return labelFromOptions(ORDER_RECURRENCES, order?.recurrence || "one_time");
   }
@@ -2008,6 +2061,222 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
 
   function orderScopeObject(order) {
     return order?.scope && typeof order.scope === "object" && !Array.isArray(order.scope) ? order.scope : {};
+  }
+
+  function orderPayment(order) {
+    const payment = orderScopeObject(order).payment;
+    return payment && typeof payment === "object" && !Array.isArray(payment) ? payment : {};
+  }
+
+  function orderBilling(order) {
+    const billing = orderScopeObject(order).billing;
+    return billing && typeof billing === "object" && !Array.isArray(billing) ? billing : {};
+  }
+
+  function clientBillingAddress(client = {}) {
+    const billingAddress = [
+      [client.billing_street, client.billing_number].filter(Boolean).join(", "),
+      client.billing_complement,
+      client.billing_neighborhood,
+      [client.billing_city, client.billing_state].filter(Boolean).join(" - "),
+      client.billing_postal_code ? `CEP ${client.billing_postal_code}` : "",
+      client.billing_country,
+    ].filter(Boolean).join("\n");
+    if (billingAddress) return billingAddress;
+    return client.address || [
+      [client.street, client.number].filter(Boolean).join(", "),
+      client.complement,
+      client.neighborhood,
+      [client.city, client.state].filter(Boolean).join(" - "),
+      client.postal_code ? `CEP ${client.postal_code}` : "",
+      client.country,
+    ].filter(Boolean).join("\n");
+  }
+
+  function budgetApprovedItemsText(budget) {
+    return budgetPreviewItems(budget).map(orderItemScopeLine).filter(Boolean).join("\n");
+  }
+
+  function orderItemScopeLine(item) {
+    const name = item.name || item.description || item.title || "Item";
+    const description = item.description && item.description !== name ? ` — ${item.description}` : "";
+    return `${name}${description}`;
+  }
+
+  function orderItemSourceKey(item, index = 0) {
+    return item.sourceKey || item.id || item.productId || `budget-item-${index + 1}`;
+  }
+
+  function normalizeOrderItem(item = {}, index = 0, { included = true, budget = null } = {}) {
+    const quantity = Number(item.quantity ?? 1) || 1;
+    const total = Number(item.total ?? item.amount ?? 0) || 0;
+    const unitPrice = Number(item.unitPrice ?? item.unit_price ?? (quantity ? total / quantity : total) ?? 0) || 0;
+    const estimatedHours = Number(item.estimatedHours ?? item.estimated_hours ?? item.hours ?? 0) || 0;
+    const description = String(item.description || item.text || item.title || item.name || "").trim();
+    const name = String(item.name || item.productName || item.title || description || `Item ${index + 1}`).trim();
+
+    return {
+      key: orderItemSourceKey(item, index),
+      included: item.included !== false && included,
+      budgetId: item.budgetId || item.budget_id || budget?.id || null,
+      budgetItemIndex: Number.isInteger(item.budgetItemIndex) ? item.budgetItemIndex : index,
+      position: Number(item.position || index + 1),
+      name,
+      description,
+      quantity,
+      estimatedHours,
+      unitPrice,
+      total,
+      notes: String(item.notes || item.observations || item.internalNotes || "").trim(),
+      sourceItem: item.sourceItem || item.source_item || item,
+    };
+  }
+
+  function budgetOrderItems(budget) {
+    return budgetPreviewItems(budget).map((item, index) => normalizeOrderItem(item, index, { included: true, budget }));
+  }
+
+  function serviceOrderStoredItems(order) {
+    return state.serviceOrderItems
+      .filter((item) => item.service_order_id === order?.id)
+      .sort((a, b) => Number(a.position || 0) - Number(b.position || 0))
+      .map((item, index) => normalizeOrderItem({
+        key: item.id,
+        included: true,
+        budgetId: item.budget_id,
+        budgetItemIndex: item.budget_item_index,
+        position: item.position,
+        name: item.name,
+        description: item.description,
+        quantity: item.quantity,
+        estimatedHours: item.estimated_hours,
+        unitPrice: item.unit_price,
+        total: item.total,
+        notes: item.notes,
+        sourceItem: item.source_item,
+      }, index, { included: true }));
+  }
+
+  function orderItemsForModal(order) {
+    const storedItems = serviceOrderStoredItems(order);
+    if (storedItems.length) return storedItems;
+    const scopeItems = orderScopeObject(order).orderItems;
+    if (Array.isArray(scopeItems) && scopeItems.length) return scopeItems.map((item, index) => normalizeOrderItem(item, index));
+    const budget = state.budgets.find((item) => item.id === order?.budget_id);
+    if (budget) return budgetOrderItems(budget);
+    return [];
+  }
+
+  function selectedOrderItems(items = []) {
+    return items.filter((item) => item.included !== false);
+  }
+
+  function orderItemsTotals(items = []) {
+    const selected = selectedOrderItems(items);
+    return {
+      estimatedHours: selected.reduce((sum, item) => sum + Number(item.estimatedHours || 0), 0),
+      approvedValue: selected.reduce((sum, item) => sum + Number(item.total || 0), 0),
+      scopeText: selected.map(orderItemScopeLine).filter(Boolean).join("\n"),
+    };
+  }
+
+  function buildBudgetSnapshot(budget, overrides = {}) {
+    if (!budget) return null;
+    const payload = budgetPayload(budget);
+    return {
+      id: budget.id,
+      number: budgetNumberLabel(budget),
+      title: budget.title || "",
+      status: budget.status || "",
+      currency: budget.currency || "BRL",
+      subtotal: Number(budget.subtotal || 0),
+      discount: Number(budget.discount || 0),
+      tax: Number(budget.tax || 0),
+      total: Number(budget.total || 0),
+      validUntil: budget.valid_until || null,
+      productName: payload.productName || payload.serviceType || "",
+      items: budgetOrderItems(budget).map((item) => ({
+        name: item.name,
+        description: item.description,
+        quantity: item.quantity,
+        estimatedHours: item.estimatedHours,
+        unitPrice: item.unitPrice,
+        total: item.total,
+        notes: item.notes,
+        sourceItem: item.sourceItem,
+      })),
+      paymentMethod: payload.paymentMethod || payload.paymentTerms || "",
+      paymentInstallments: payload.paymentInstallments || "",
+      paymentTerms: payload.paymentTerms || "",
+      discountReason: payload.discountReason || "",
+      discountReasonOther: payload.discountReasonOther || "",
+      deliveryTerms: payload.deliveryTerms || "",
+      productionNotes: payload.productionNotes || "",
+      ...overrides,
+      snapshotAt: new Date().toISOString(),
+    };
+  }
+
+  function buildServiceOrderDraftFromBudget(budget, base = {}) {
+    const payload = budgetPayload(budget);
+    const client = state.clients.find((item) => item.id === budget?.client_id) || {};
+    const scope = [
+      payload.summary,
+      budgetApprovedItemsText(budget),
+      payload.productionNotes,
+    ].filter(Boolean).join("\n\n");
+    const deliveryDate = budgetDeliveryInputValue(payload.deliveryTerms) || dateInputValue(budget?.valid_until);
+    const paymentMethod = payload.paymentMethod || payload.paymentTerms || "";
+    const paymentCondition = payload.paymentInstallments || payload.paymentTerms || "";
+    const discountReason = payload.discountReason === "Outro"
+      ? payload.discountReasonOther || payload.discountReason
+      : payload.discountReason || "";
+    const orderItems = budgetOrderItems(budget);
+    const totals = orderItemsTotals(orderItems);
+
+    return {
+      ...base,
+      client_id: budget?.client_id || base.client_id || null,
+      project_id: budget?.project_id || base.project_id || null,
+      budget_id: budget?.id || base.budget_id || null,
+      title: budget?.title || base.title || "",
+      status: base.status || "open",
+      starts_at: base.starts_at || "",
+      due_at: deliveryDate || base.due_at || "",
+      recurrence: base.recurrence || "one_time",
+      billing_cycle: payload.deliveryTerms || base.billing_cycle || "",
+      estimated_hours: totals.estimatedHours || Number(payload.productEstimatedHours || base.estimated_hours || 0),
+      hourly_rate: Number(payload.productHourlyRate || base.hourly_rate || 0),
+      scope: {
+        ...orderScopeObject(base),
+        text: totals.scopeText || scope || budget?.title || "",
+        orderItems,
+        internalNotes: payload.internalNotes || payload.productionNotes || "",
+        responsible: payload.salesOwner || currentUserLabel(),
+        priority: orderScopeObject(base).priority || "normal",
+        payment: {
+          approvedValue: totals.approvedValue || Number(budget?.total || 0),
+          discountApplied: Number(budget?.discount || 0),
+          discountReason,
+          method: paymentMethod,
+          condition: paymentCondition,
+          status: "pending",
+          expectedDate: deliveryDate || "",
+        },
+        billing: {
+          type: client.type === "person" ? "person" : "company",
+          name: client.name || "",
+          document: client.document || "",
+          email: client.billing_email || client.email || "",
+          address: clientBillingAddress(client),
+          fiscalNotes: "",
+        },
+        budgetSnapshot: buildBudgetSnapshot(budget),
+        fromBudget: budget?.id || "",
+        budgetNumber: budget ? budgetNumberLabel(budget) : "",
+        confirmedWithBudget: false,
+      },
+    };
   }
 
   function isoDate(value) {
@@ -2725,10 +2994,16 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     if (Array.isArray(payload.lineItems) && payload.lineItems.length) {
       return payload.lineItems.map((item, index) => ({
         code: String(index + 1).padStart(4, "0"),
+        sourceKey: item.id || item.productId || `line-${index + 1}`,
+        productId: item.productId || null,
+        name: item.productName || item.title || item.description || `Item ${index + 1}`,
         description: item.proposalDescription || item.description || item.text || item.title || "-",
         quantity: item.quantity || 1,
+        estimatedHours: Number(item.estimatedHours || item.laborHours || item.hours || 0),
         unitPrice: Number(item.unitPrice || 0),
         total: Number(item.total || 0),
+        notes: item.notes || item.productionNotes || item.internalNotes || "",
+        sourceItem: item,
       }));
     }
 
@@ -2739,10 +3014,15 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
         const unitPrice = typeof item === "string" ? fallbackTotal : Number(item.unitPrice ?? item.unit_price ?? fallbackTotal);
         return {
           code: String(index + 1).padStart(4, "0"),
+          sourceKey: item.id || `payload-item-${index + 1}`,
+          name: typeof item === "string" ? item : item.title || item.text || `Item ${index + 1}`,
           description: typeof item === "string" ? item : item.text || item.title || "-",
           quantity,
+          estimatedHours: Number(typeof item === "string" ? 0 : item.estimatedHours ?? item.estimated_hours ?? item.hours ?? 0),
           unitPrice,
           total: typeof item === "string" ? fallbackTotal : Number(item.total ?? item.amount ?? unitPrice * quantity),
+          notes: typeof item === "string" ? "" : item.notes || item.productionNotes || item.internalNotes || "",
+          sourceItem: item,
         };
       });
     }
@@ -2752,19 +3032,29 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       const unitPrice = textItems.length ? Number(budget.total || 0) / textItems.length : 0;
       return textItems.map((description, index) => ({
         code: String(index + 1).padStart(4, "0"),
+        sourceKey: `text-item-${index + 1}`,
+        name: description,
         description,
         quantity: 1,
+        estimatedHours: 0,
         unitPrice,
         total: unitPrice,
+        notes: "",
+        sourceItem: { description },
       }));
     }
 
     return [{
       code: "0001",
+      sourceKey: "fallback-item-1",
+      name: budgetPayload(budget).productName || budget.title || "Serviço",
       description: budget.title || budgetPayload(budget).serviceType || "Serviço",
       quantity: payload.quantity || 1,
+      estimatedHours: Number(payload.productEstimatedHours || 0),
       unitPrice: Number(budget.total || 0),
       total: Number(budget.total || 0),
+      notes: payload.productionNotes || "",
+      sourceItem: payload,
     }];
   }
 
@@ -3233,6 +3523,8 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
             </div>
             <button class="icon-button" type="button" data-close-modal>Fechar</button>
           </div>
+          <input type="hidden" name="recurrence" value="${valueAttr(currentOrder?.recurrence || "one_time")}">
+          <input type="hidden" name="billing_cycle" value="${valueAttr(currentOrder?.billing_cycle || "")}">
           <label class="field">
             <span>Cliente</span>
             <select class="select" name="client_id" required>${selectOptions(clientOptions, clientId || contact?.client_id || "", "Selecione")}</select>
@@ -3645,79 +3937,346 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   function openServiceOrderModal(id = "") {
     const order = state.serviceOrders.find((item) => item.id === id) || null;
     state.crmEdit = order ? { table: "service_orders", id: order.id } : null;
+    state.crmOrderDraft = null;
     state.modal = renderServiceOrderModal(order);
     clearNotice();
     render();
   }
 
   function renderServiceOrderModal(order) {
+    const currentOrder = order || state.crmOrderDraft || null;
+    const orderLabel = serviceOrderNumberLabel(currentOrder);
+    const scope = orderScopeObject(currentOrder);
+    const payment = orderPayment(currentOrder);
+    const billing = orderBilling(currentOrder);
+    const orderItems = orderItemsForModal(currentOrder);
+    const itemTotals = orderItemsTotals(orderItems);
     const clientOptions = state.clients.map((client) => [client.id, client.name]);
     const projectOptions = state.projects.map((project) => [project.id, project.name]);
     const budgetOptions = state.budgets.map((budget) => [budget.id, `${budgetNumberLabel(budget)} · ${budget.title}`]);
+    const confirmed = scope.confirmedWithBudget === true;
 
     return `
-      <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="${order ? "Editar OS" : "Nova OS"}">
+      <div class="modal-backdrop" role="dialog" aria-modal="true" aria-label="${currentOrder?.id ? "Editar OS" : "Nova OS"}">
         <form class="modal modal-wide form-stack crm-editor-form" data-order-form ${crmFormAttrs("service_orders")}>
           <div class="modal-header">
             <div>
               <span class="eyebrow">Ordem de serviço</span>
-              <h2>${order ? "Editar OS" : "Nova OS"}</h2>
+              <h2>${currentOrder?.id ? `Editar ${escapeHtml(orderLabel)}` : `Nova ${escapeHtml(orderLabel)}`}</h2>
             </div>
             <button class="icon-button" type="button" data-close-modal>Fechar</button>
           </div>
-          <div class="crm-form-grid">
-            <label class="field field-span-2">
-              <span>Título</span>
-              <input class="input" name="title" value="${valueAttr(order?.title)}" required>
+
+          <section class="budget-section">
+            <div class="budget-section-heading">
+              <strong>Dados gerais</strong>
+              <span>Identificação da ordem antes da execução.</span>
+            </div>
+            <div class="crm-form-grid">
+              <label class="field field-span-2">
+                <span>Título</span>
+                <input class="input" name="title" value="${valueAttr(currentOrder?.title)}" required>
+              </label>
+              <label class="field">
+                <span>Cliente</span>
+                <select class="select" name="client_id">${selectOptions(clientOptions, currentOrder?.client_id || "", "Sem cliente")}</select>
+              </label>
+              <label class="field">
+                <span>Projeto</span>
+                <select class="select" name="project_id">${selectOptions(projectOptions, currentOrder?.project_id || "", "Sem projeto")}</select>
+              </label>
+              <label class="field">
+                <span>Orçamento vinculado</span>
+                <select class="select" name="budget_id" data-order-budget-select>${selectOptions(budgetOptions, currentOrder?.budget_id || "", "Sem orçamento")}</select>
+              </label>
+              <label class="field">
+                <span>Status</span>
+                <select class="select" name="status">${selectOptions(ORDER_STATUSES, currentOrder?.status || "open")}</select>
+              </label>
+              <label class="field">
+                <span>Responsável</span>
+                <input class="input" name="responsible" value="${valueAttr(scope.responsible || currentUserLabel())}">
+              </label>
+              <label class="field">
+                <span>Prioridade</span>
+                <select class="select" name="priority">${selectOptions(ORDER_PRIORITIES, scope.priority || "normal")}</select>
+              </label>
+            </div>
+          </section>
+
+          <section class="budget-section">
+            <div class="budget-section-heading">
+              <strong>Escopo e entrega</strong>
+              <span>O que foi aprovado e o que precisa ser entregue.</span>
+            </div>
+            <div class="crm-form-grid">
+              <label class="field field-span-4">
+                <span>Escopo</span>
+                <textarea class="textarea textarea-small" name="scope">${escapeHtml(scopeText(currentOrder?.scope) || itemTotals.scopeText)}</textarea>
+              </label>
+              <div class="field-span-4">
+                ${renderServiceOrderItemRows(orderItems)}
+              </div>
+              <label class="field">
+                <span>Data de início</span>
+                <input class="input" name="starts_at" type="date" value="${valueAttr(dateInputValue(currentOrder?.starts_at))}">
+              </label>
+              <label class="field">
+                <span>Data de entrega</span>
+                <input class="input" name="due_at" type="date" value="${valueAttr(dateInputValue(currentOrder?.due_at))}" required>
+              </label>
+              <label class="field">
+                <span>Horas previstas</span>
+                <input class="input" name="estimated_hours" type="number" min="0" step="0.25" value="${valueAttr(itemTotals.estimatedHours || currentOrder?.estimated_hours || "")}" data-order-total-hours>
+              </label>
+              <label class="field field-span-4">
+                <span>Observações internas</span>
+                <textarea class="textarea textarea-small" name="internal_notes">${escapeHtml(scope.internalNotes || "")}</textarea>
+              </label>
+            </div>
+          </section>
+
+          <section class="budget-section">
+            <div class="budget-section-heading">
+              <strong>Pagamento</strong>
+              <span>Condições comerciais congeladas para a OS.</span>
+            </div>
+            <div class="crm-form-grid">
+              <label class="field">
+                <span>Valor aprovado</span>
+                <input class="input" name="approved_value" type="number" min="0" step="0.01" value="${valueAttr(itemTotals.approvedValue || payment.approvedValue || "")}" data-order-approved-value>
+              </label>
+              <label class="field">
+                <span>Desconto aplicado</span>
+                <input class="input" name="discount_applied" type="number" min="0" max="100" step="0.01" value="${valueAttr(payment.discountApplied ?? "")}">
+              </label>
+              <label class="field field-span-2">
+                <span>Justificativa do desconto</span>
+                <input class="input" name="discount_reason" value="${valueAttr(payment.discountReason || "")}">
+              </label>
+              <label class="field">
+                <span>Forma de pagamento</span>
+                <input class="input" name="payment_method" value="${valueAttr(payment.method || "")}">
+              </label>
+              <label class="field">
+                <span>Condição de pagamento</span>
+                <input class="input" name="payment_condition" value="${valueAttr(payment.condition || "")}">
+              </label>
+              <label class="field">
+                <span>Status do pagamento</span>
+                <select class="select" name="payment_status">${selectOptions(PAYMENT_STATUSES, payment.status || "pending")}</select>
+              </label>
+              <label class="field">
+                <span>Data prevista de pagamento</span>
+                <input class="input" name="payment_expected_date" type="date" value="${valueAttr(dateInputValue(payment.expectedDate))}">
+              </label>
+            </div>
+          </section>
+
+          <section class="budget-section">
+            <div class="budget-section-heading">
+              <strong>Faturamento</strong>
+              <span>Dados fiscais e financeiros da emissão.</span>
+            </div>
+            <div class="crm-form-grid">
+              <label class="field">
+                <span>Tipo de faturamento</span>
+                <select class="select" name="billing_type">${selectOptions(BILLING_TYPES, billing.type || "company")}</select>
+              </label>
+              <label class="field">
+                <span>Razão social/nome</span>
+                <input class="input" name="billing_name" value="${valueAttr(billing.name || "")}">
+              </label>
+              <label class="field">
+                <span>CPF/CNPJ</span>
+                <input class="input" name="billing_document" value="${valueAttr(billing.document || "")}">
+              </label>
+              <label class="field">
+                <span>E-mail financeiro</span>
+                <input class="input" name="billing_email" type="email" value="${valueAttr(billing.email || "")}">
+              </label>
+              <label class="field field-span-4">
+                <span>Endereço de faturamento</span>
+                <textarea class="textarea textarea-small" name="billing_address">${escapeHtml(billing.address || "")}</textarea>
+              </label>
+              <label class="field field-span-4">
+                <span>Observações fiscais</span>
+                <textarea class="textarea textarea-small" name="fiscal_notes">${escapeHtml(billing.fiscalNotes || "")}</textarea>
+              </label>
+            </div>
+          </section>
+
+          ${renderServiceOrderInternalRecord(currentOrder)}
+
+          <section class="budget-section">
+            <div class="budget-section-heading">
+              <strong>Confirmação</strong>
+              <span>A criação só acontece após a revisão manual.</span>
+            </div>
+            <label class="toggle-row">
+              <input type="checkbox" name="confirmed_with_budget" ${confirmed ? "checked" : ""}>
+              <span>Dados conferidos com o orçamento aprovado</span>
             </label>
-            <label class="field">
-              <span>Cliente</span>
-              <select class="select" name="client_id">${selectOptions(clientOptions, order?.client_id || "", "Sem cliente")}</select>
-            </label>
-            <label class="field">
-              <span>Projeto</span>
-              <select class="select" name="project_id">${selectOptions(projectOptions, order?.project_id || "", "Sem projeto")}</select>
-            </label>
-            <label class="field">
-              <span>Orçamento</span>
-              <select class="select" name="budget_id">${selectOptions(budgetOptions, order?.budget_id || "", "Sem orçamento")}</select>
-            </label>
-            <label class="field">
-              <span>Status</span>
-              <select class="select" name="status">${selectOptions(ORDER_STATUSES, order?.status || "open")}</select>
-            </label>
-            <label class="field">
-              <span>Recorrência</span>
-              <select class="select" name="recurrence">${selectOptions(ORDER_RECURRENCES, order?.recurrence || "one_time")}</select>
-            </label>
-            <label class="field">
-              <span>Ciclo de cobrança</span>
-              <input class="input" name="billing_cycle" value="${valueAttr(order?.billing_cycle)}" placeholder="Ex: mensal, quinzenal, sob demanda">
-            </label>
-            <label class="field">
-              <span>Início</span>
-              <input class="input" name="starts_at" type="date" value="${valueAttr(dateInputValue(order?.starts_at))}">
-            </label>
-            <label class="field">
-              <span>Prazo</span>
-              <input class="input" name="due_at" type="date" value="${valueAttr(dateInputValue(order?.due_at))}">
-            </label>
-            <label class="field">
-              <span>Horas previstas</span>
-              <input class="input" name="estimated_hours" type="number" min="0" step="0.25" value="${valueAttr(order?.estimated_hours ?? "")}">
-            </label>
-            <label class="field">
-              <span>Valor/hora</span>
-              <input class="input" name="hourly_rate" type="number" min="0" step="0.01" value="${valueAttr(order?.hourly_rate ?? "")}" placeholder="0.00">
-            </label>
-            <label class="field field-span-4">
-              <span>Escopo</span>
-              <textarea class="textarea textarea-small" name="scope">${escapeHtml(scopeText(order?.scope))}</textarea>
-            </label>
-          </div>
-          ${renderCrmFormActions("service_orders", order, "Criar OS", "Salvar OS")}
+          </section>
+          ${renderOrderFormActions(currentOrder)}
         </form>
       </div>`;
+  }
+
+  function renderServiceOrderInternalRecord(order) {
+    const source = order?.source || (order?.budget_id ? "budget" : "manual");
+    const createdBy = order?.created_by_email || state.session?.user?.email || "";
+    const updatedBy = order?.updated_by_email || order?.created_by_email || state.session?.user?.email || "";
+    const originBudgetId = order?.origin_budget_id || order?.budget_id || "";
+    const originBudget = state.budgets.find((budget) => budget.id === originBudgetId);
+    const originBudgetLabel = originBudget ? budgetShortReferenceLabel(originBudget) : orderScopeObject(order).budgetNumber || "-";
+    const confirmationStatus = order?.confirmation_status || (orderScopeObject(order).confirmedWithBudget ? "confirmed" : "pending");
+
+    return `
+      <section class="budget-section internal-record-section">
+        <div class="budget-section-heading">
+          <strong>Registro interno</strong>
+          <span>Metadados automáticos da criação e atualização.</span>
+        </div>
+        <dl class="internal-record-grid">
+          <div><dt>Criado por</dt><dd>${escapeHtml(createdBy || "-")}</dd></div>
+          <div><dt>E-mail</dt><dd>${escapeHtml(createdBy || "-")}</dd></div>
+          <div><dt>Data e hora de criação</dt><dd>${escapeHtml(formatDateTime(order?.created_at || new Date().toISOString()))}</dd></div>
+          <div><dt>Última atualização</dt><dd>${escapeHtml(formatDateTime(order?.updated_at || new Date().toISOString()))}</dd></div>
+          <div><dt>Atualizado por</dt><dd>${escapeHtml(updatedBy || "-")}</dd></div>
+          <div><dt>Origem da OS</dt><dd>${source === "budget" ? "Orçamento" : "Manual"}</dd></div>
+          <div><dt>ID do orçamento de origem</dt><dd>${escapeHtml(originBudgetLabel)}</dd></div>
+          <div><dt>Status de conferência</dt><dd>${confirmationStatus === "confirmed" ? "Confirmado" : "Pendente"}</dd></div>
+        </dl>
+      </section>`;
+  }
+
+  function renderServiceOrderItemRows(items = []) {
+    if (!items.length) {
+      return `<div class="empty-state">Selecione um orçamento para carregar os itens aprovados.</div>`;
+    }
+
+    return `
+      <div class="order-items-list" data-order-items-list>
+        ${items.map((item, index) => `
+          <article class="order-item-row ${item.included === false ? "" : "is-included"}" data-order-item-row>
+            <input type="hidden" name="order_item_key" value="${valueAttr(item.key)}">
+            <input type="hidden" name="order_item_budget_id" value="${valueAttr(item.budgetId || "")}">
+            <input type="hidden" name="order_item_budget_index" value="${valueAttr(item.budgetItemIndex ?? index)}">
+            <input type="hidden" name="order_item_position" value="${valueAttr(item.position || index + 1)}">
+            <input type="hidden" name="order_item_name" value="${valueAttr(item.name)}">
+            <input type="hidden" name="order_item_description" value="${valueAttr(item.description)}">
+            <input type="hidden" name="order_item_quantity" value="${valueAttr(item.quantity)}">
+            <input type="hidden" name="order_item_hours" value="${valueAttr(item.estimatedHours)}" data-order-item-hours>
+            <input type="hidden" name="order_item_unit_price" value="${valueAttr(item.unitPrice)}">
+            <input type="hidden" name="order_item_total" value="${valueAttr(item.total)}" data-order-item-total>
+            <input type="hidden" name="order_item_notes" value="${valueAttr(item.notes)}">
+            <textarea class="is-hidden" name="order_item_source">${escapeHtml(JSON.stringify(item.sourceItem || {}))}</textarea>
+            <label class="order-item-check">
+              <input type="checkbox" name="order_item_included" data-order-item-include ${item.included === false ? "" : "checked"}>
+              <span>Incluir</span>
+            </label>
+            <div class="order-item-main">
+              <strong>${escapeHtml(item.name)}</strong>
+              <span>${escapeHtml(item.description || "-")}</span>
+              ${item.notes ? `<small>${escapeHtml(item.notes)}</small>` : ""}
+            </div>
+            <dl class="order-item-meta">
+              <div><dt>Qtd.</dt><dd>${escapeHtml(formatDecimalNumber(item.quantity))}</dd></div>
+              <div><dt>Horas</dt><dd>${escapeHtml(formatDecimalHours(item.estimatedHours))}</dd></div>
+              <div><dt>Unit.</dt><dd>${formatCurrency(item.unitPrice)}</dd></div>
+              <div><dt>Total</dt><dd>${formatCurrency(item.total)}</dd></div>
+            </dl>
+          </article>
+        `).join("")}
+      </div>`;
+  }
+
+  function parseOrderItemSource(row) {
+    const raw = row.querySelector('[name="order_item_source"]')?.value || "{}";
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function orderItemFromRow(row, index = 0) {
+    return normalizeOrderItem({
+      key: row.querySelector('[name="order_item_key"]')?.value || `row-${index + 1}`,
+      included: row.querySelector('[name="order_item_included"]')?.checked === true,
+      budgetId: row.querySelector('[name="order_item_budget_id"]')?.value || null,
+      budgetItemIndex: Number(row.querySelector('[name="order_item_budget_index"]')?.value || index),
+      position: Number(row.querySelector('[name="order_item_position"]')?.value || index + 1),
+      name: row.querySelector('[name="order_item_name"]')?.value || "",
+      description: row.querySelector('[name="order_item_description"]')?.value || "",
+      quantity: Number(row.querySelector('[name="order_item_quantity"]')?.value || 1),
+      estimatedHours: Number(row.querySelector('[name="order_item_hours"]')?.value || 0),
+      unitPrice: Number(row.querySelector('[name="order_item_unit_price"]')?.value || 0),
+      total: Number(row.querySelector('[name="order_item_total"]')?.value || 0),
+      notes: row.querySelector('[name="order_item_notes"]')?.value || "",
+      sourceItem: parseOrderItemSource(row),
+    }, index, { included: row.querySelector('[name="order_item_included"]')?.checked === true });
+  }
+
+  function collectServiceOrderItems(form, errors = []) {
+    const rows = [...form.querySelectorAll("[data-order-item-row]")];
+    const items = rows.map(orderItemFromRow).filter((item) => item.included !== false);
+    if (!items.length) errors.push("Selecione ao menos um item para criar a OS.");
+    return items;
+  }
+
+  function serviceOrderItemRecord(item, serviceOrderId, index = 0, budgetId = null) {
+    return {
+      service_order_id: serviceOrderId,
+      budget_id: item.budgetId || budgetId || null,
+      budget_item_index: Number.isFinite(Number(item.budgetItemIndex)) ? Number(item.budgetItemIndex) : index,
+      position: index + 1,
+      name: item.name || `Item ${index + 1}`,
+      description: item.description || "",
+      quantity: Number(item.quantity || 0),
+      estimated_hours: Number(item.estimatedHours || 0),
+      unit_price: Number(item.unitPrice || 0),
+      total: Number(item.total || 0),
+      notes: item.notes || "",
+      source_item: item.sourceItem && typeof item.sourceItem === "object" && !Array.isArray(item.sourceItem) ? item.sourceItem : {},
+    };
+  }
+
+  async function saveServiceOrderWithItems(payload, items, editing) {
+    const client = supabase();
+    const result = editing
+      ? await client.from("service_orders").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", editing.id).select("id").single()
+      : await client.from("service_orders").insert(payload).select("id").single();
+    if (result.error) return result;
+
+    const serviceOrderId = result.data?.id || editing?.id;
+    const deleteResult = await client.from("service_order_items").delete().eq("service_order_id", serviceOrderId);
+    if (deleteResult.error) return deleteResult;
+
+    if (!items.length) return { data: result.data, error: null };
+    const insertResult = await client
+      .from("service_order_items")
+      .insert(items.map((item, index) => serviceOrderItemRecord(item, serviceOrderId, index, payload.budget_id || null)));
+    if (insertResult.error && !editing) await client.from("service_orders").delete().eq("id", serviceOrderId);
+    return insertResult.error ? insertResult : { data: result.data, error: null };
+  }
+
+  function syncServiceOrderItemTotals(form) {
+    if (!form) return;
+    const items = [...form.querySelectorAll("[data-order-item-row]")].map(orderItemFromRow);
+    const totals = orderItemsTotals(items);
+    const hoursInput = form.querySelector("[data-order-total-hours]");
+    const approvedInput = form.querySelector("[data-order-approved-value]");
+    const scopeInput = form.querySelector('[name="scope"]');
+    if (hoursInput) hoursInput.value = totals.estimatedHours ? String(Number(totals.estimatedHours.toFixed(2))) : "";
+    if (approvedInput) approvedInput.value = totals.approvedValue ? String(Number(totals.approvedValue.toFixed(2))) : "";
+    if (scopeInput) scopeInput.value = totals.scopeText;
+    form.querySelectorAll("[data-order-item-row]").forEach((row) => {
+      const checked = row.querySelector('[name="order_item_included"]')?.checked === true;
+      row.classList.toggle("is-included", checked);
+    });
   }
 
   function exportSelectedBudgetPdf(id = "") {
@@ -3861,7 +4420,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           <div class="modal-header no-print">
             <div>
               <span class="eyebrow">Preview PDF</span>
-              <h2>${orders.length === 1 ? escapeHtml(firstOrder.title) : `${orders.length} OS selecionadas`}</h2>
+              <h2>${orders.length === 1 ? escapeHtml(serviceOrderDisplayName(firstOrder)) : `${orders.length} OS selecionadas`}</h2>
             </div>
             <div class="modal-actions">
               <button class="button button-secondary" type="button" data-download-proposal-pdf>Baixar PDF</button>
@@ -3894,7 +4453,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
                 <div><dt>Prazo</dt><dd>${formatDate(order.due_at)}</dd></div>
               </dl>
             </header>
-            <h1>Ordem de serviço</h1>
+            <h1>${escapeHtml(serviceOrderNumberLabel(order))}</h1>
             <section class="proposal-grid">
               <div>
                 <strong>Cliente</strong>
@@ -3956,7 +4515,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
           if (index) doc.addPage();
           drawOrderPdfPage(doc, order);
         });
-        doc.save(orders.length === 1 ? `os-${slugSafe(orders[0].title || "raksa")}.pdf` : `ordens-servico-raksa-${new Date().toISOString().slice(0, 10)}.pdf`);
+        doc.save(orders.length === 1 ? `os-${slugSafe(serviceOrderNumberLabel(orders[0]))}.pdf` : `ordens-servico-raksa-${new Date().toISOString().slice(0, 10)}.pdf`);
       }
     } catch (error) {
       setNotice("error", error.message || "Não foi possível gerar o PDF agora.");
@@ -4004,7 +4563,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   function drawOrderPdfPage(doc, order) {
     const budget = state.budgets.find((item) => item.id === order.budget_id);
     const client = state.clients.find((item) => item.id === order.client_id);
-    let y = drawPdfHeader(doc, "Ordem de serviço", [
+    let y = drawPdfHeader(doc, serviceOrderNumberLabel(order), [
       ["Criado em", formatDate(order.created_at)],
       ["Status", labelFromOptions(ORDER_STATUSES, order.status)],
       ["Prazo", formatDate(order.due_at)],
@@ -4149,7 +4708,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const record = records.find((item) => item.id === id);
     if (!record) return "este registro";
     if (table === "budgets") return `orçamento ${budgetNumberLabel(record)}`;
-    if (table === "service_orders") return `OS ${record.title || record.id}`;
+    if (table === "service_orders") return serviceOrderDisplayName(record);
     return record.name || record.title || record.email || "este registro";
   }
 
@@ -4290,10 +4849,11 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
               return `
                 <tr class="${selected ? "is-selected" : ""}">
                   <td class="select-column">
-                    <input type="checkbox" value="${escapeHtml(order.id)}" aria-label="Selecionar OS ${escapeHtml(order.title)}" data-select-order ${selected ? "checked" : ""}>
+                    <input type="checkbox" value="${escapeHtml(order.id)}" aria-label="Selecionar ${escapeHtml(serviceOrderDisplayName(order))}" data-select-order ${selected ? "checked" : ""}>
                   </td>
                   <td>
-                    <strong>${escapeHtml(order.title)}</strong>
+                    <strong>${escapeHtml(serviceOrderNumberLabel(order))}</strong>
+                    <span>${escapeHtml(order.title)}</span>
                     <span>${escapeHtml(scopeText(order.scope).slice(0, 96))}</span>
                   </td>
                   <td>${escapeHtml(orderBudgetLabel(order))}</td>
@@ -4321,7 +4881,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
   function renderTimeEntries() {
     const editingEntry = crmEditRecord("time_entries");
     const projectOptions = state.projects.map((project) => [project.id, project.name]);
-    const orderOptions = state.serviceOrders.map((order) => [order.id, order.title]);
+    const orderOptions = state.serviceOrders.map((order) => [order.id, serviceOrderDisplayName(order)]);
     const totalHours = state.timeEntries.reduce((sum, entry) => sum + hoursFromEntry(entry), 0);
     const billableHours = state.timeEntries.filter((entry) => entry.billable).reduce((sum, entry) => sum + hoursFromEntry(entry), 0);
     const billableTotal = state.timeEntries.filter((entry) => entry.billable).reduce((sum, entry) => sum + billableAmount(entry), 0);
@@ -4763,11 +5323,25 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     const data = new FormData(form);
     const errors = [];
     const scopeValue = String(data.get("scope") || "").trim();
-    const previousScopeText = scopeText(editing?.scope);
     const startsAt = optionalDateFromForm(data, "starts_at", "Início", errors);
-    const dueAt = optionalDateFromForm(data, "due_at", "Prazo", errors);
-    validateDateOrder(startsAt, dueAt, "Início", "Prazo", errors);
+    const dueAt = requiredDateFromForm(data, "due_at", "a data de entrega", errors);
+    if (startsAt && dueAt) validateDateOrder(startsAt, dueAt, "Início", "Entrega", errors);
     const recurrence = optionalFormValue(data, "recurrence") || "one_time";
+    const budget = state.budgets.find((item) => item.id === optionalFormValue(data, "budget_id")) || null;
+    const existingScope = orderScopeObject(editing || state.crmOrderDraft);
+    const approvedValue = nonNegativeNumberFromForm(data, "approved_value", "Valor aprovado", errors);
+    const discountApplied = nonNegativeNumberFromForm(data, "discount_applied", "Desconto aplicado", errors);
+    const paymentExpectedDate = optionalDateFromForm(data, "payment_expected_date", "Data prevista de pagamento", errors);
+    const billingEmail = optionalEmailFromForm(data, "billing_email", "E-mail financeiro", errors);
+    const confirmedWithBudget = data.get("confirmed_with_budget") === "on";
+    if (!confirmedWithBudget) errors.push("Confirme que os dados foram conferidos com o orçamento aprovado.");
+    const selectedItems = collectServiceOrderItems(form, errors);
+    const selectedTotals = orderItemsTotals(selectedItems);
+    const currentUser = state.session?.user || {};
+    const currentUserId = currentUser.id || null;
+    const currentUserEmail = currentUser.email || "";
+    const confirmedAt = confirmedWithBudget ? (editing?.confirmed_at || new Date().toISOString()) : null;
+
     const payload = {
       title: requiredTextFromForm(data, "title", "o título da OS", errors),
       client_id: optionalFormValue(data, "client_id"),
@@ -4778,14 +5352,76 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       due_at: dueAt,
       recurrence,
       billing_cycle: textFromForm(data, "billing_cycle"),
-      estimated_hours: nonNegativeNumberFromForm(data, "estimated_hours", "Horas previstas", errors),
+      estimated_hours: selectedTotals.estimatedHours || nonNegativeNumberFromForm(data, "estimated_hours", "Horas previstas", errors),
       hourly_rate: nonNegativeNumberFromForm(data, "hourly_rate", "Valor/hora", errors),
-      scope: scopeValue ? (editing?.scope && scopeValue === previousScopeText ? editing.scope : { text: scopeValue }) : {},
+      updated_by: currentUserId,
+      updated_by_email: currentUserEmail,
+      source: optionalFormValue(data, "budget_id") ? "budget" : "manual",
+      origin_budget_id: optionalFormValue(data, "budget_id"),
+      confirmation_status: confirmedWithBudget ? "confirmed" : "pending",
+      confirmed_at: confirmedAt,
+      scope: {
+        ...existingScope,
+        text: selectedTotals.scopeText || scopeValue,
+        orderItems: selectedItems,
+        internalNotes: textFromForm(data, "internal_notes"),
+        responsible: textFromForm(data, "responsible"),
+        priority: optionalFormValue(data, "priority") || "normal",
+        payment: {
+          approvedValue: selectedTotals.approvedValue || approvedValue,
+          discountApplied,
+          discountReason: textFromForm(data, "discount_reason"),
+          method: textFromForm(data, "payment_method"),
+          condition: textFromForm(data, "payment_condition"),
+          status: optionalFormValue(data, "payment_status") || "pending",
+          expectedDate: paymentExpectedDate || "",
+        },
+        billing: {
+          type: optionalFormValue(data, "billing_type") || "company",
+          name: textFromForm(data, "billing_name"),
+          document: textFromForm(data, "billing_document"),
+          email: billingEmail || "",
+          address: textFromForm(data, "billing_address"),
+          fiscalNotes: textFromForm(data, "fiscal_notes"),
+        },
+        budgetSnapshot: buildBudgetSnapshot(budget, {
+          approvedValue,
+          discountApplied,
+          discountReason: textFromForm(data, "discount_reason"),
+          paymentMethod: textFromForm(data, "payment_method"),
+          paymentCondition: textFromForm(data, "payment_condition"),
+          selectedItems,
+        }) || existingScope.budgetSnapshot || null,
+        fromBudget: optionalFormValue(data, "budget_id") || existingScope.fromBudget || "",
+        budgetNumber: budget ? budgetNumberLabel(budget) : existingScope.budgetNumber || "",
+        confirmedWithBudget,
+        reviewedAt: new Date().toISOString(),
+      },
     };
+    if (!editing) {
+      payload.created_by = currentUserId;
+      payload.created_by_email = currentUserEmail;
+    }
     if (!ORDER_RECURRENCES.some(([value]) => value === recurrence)) errors.push("Recorrência inválida.");
+    if (!ORDER_PRIORITIES.some(([value]) => value === payload.scope.priority)) errors.push("Prioridade inválida.");
+    if (!PAYMENT_STATUSES.some(([value]) => value === payload.scope.payment.status)) errors.push("Status do pagamento inválido.");
+    if (!BILLING_TYPES.some(([value]) => value === payload.scope.billing.type)) errors.push("Tipo de faturamento inválido.");
     if (!validateCrmPayload("service_orders", errors)) return;
 
-    await submitCrmRecord("service_orders", payload, editing, editing ? "OS atualizada." : "OS criada.");
+    const noticeRoute = routeKey();
+    state.crmSubmitting = "service_orders";
+    refreshSubmittingModal("service_orders", editing || state.crmOrderDraft);
+    renderTablePage("service_orders");
+
+    let error = null;
+    try {
+      const result = await saveServiceOrderWithItems(payload, selectedItems, editing);
+      error = result.error;
+    } catch (caught) {
+      error = caught;
+    }
+
+    await afterCrmMutation(error, editing ? "OS atualizada." : "OS criada.", noticeRoute, "service_orders", editing);
   }
 
   async function duplicateSelectedBudget() {
@@ -4881,62 +5517,41 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       renderBudgets();
       return;
     }
-
-    const budgetsWithoutOrder = budgets.filter((budget) => !state.serviceOrders.some((order) => order.budget_id === budget.id));
-    if (!budgetsWithoutOrder.length) {
-      state.crmSelectedBudgets = budgets.map((budget) => budget.id);
-      setNotice("success", budgets.length === 1 ? "OS já existente para este orçamento." : "Todos os orçamentos selecionados já têm OS.", { route: "crm/orders" });
-      if (window.location.hash !== "#/crm/orders") window.location.hash = "#/crm/orders";
-      else renderServiceOrders();
-      return;
-    }
-
-    state.crmSubmitting = "service_orders";
-    renderBudgets();
-    const rows = budgetsWithoutOrder.map((budget) => {
-      const payload = budgetPayload(budget);
-      const scope = [
-        payload.summary,
-        budgetItemsText(budget),
-        payload.productionNotes,
-      ].filter(Boolean).join("\n\n");
-      return {
-        client_id: budget.client_id,
-        project_id: budget.project_id,
-        budget_id: budget.id,
-        title: budget.title,
-        status: "open",
-        due_at: budget.valid_until,
-        recurrence: "one_time",
-        billing_cycle: payload.deliveryTerms || "",
-        estimated_hours: Number(payload.productEstimatedHours || 0),
-        hourly_rate: Number(payload.productHourlyRate || 0),
-        scope: {
-          text: scope || budget.title,
-          fromBudget: budget.id,
-          budgetNumber: budgetNumberLabel(budget),
-        },
-      };
-    });
-    let error = null;
-    try {
-      const result = await supabase().from("service_orders").insert(rows);
-      error = result.error;
-    } catch (caught) {
-      error = caught;
-    }
-
-    state.crmSubmitting = null;
-    if (error) {
-      setNotice("error", error.message || "Não foi possível gerar a OS.", { route: routeKey() });
+    if (budgets.length > 1) {
+      setNotice("error", "Selecione apenas um orçamento para revisar e criar a OS.");
       renderBudgets();
       return;
     }
-    state.crmLoaded = false;
-    await loadAdminData({ force: true });
-    setNotice("success", rows.length === 1 ? "OS gerada a partir do orçamento." : "OS geradas a partir dos orçamentos.", { route: "crm/orders" });
-    if (window.location.hash !== "#/crm/orders") window.location.hash = "#/crm/orders";
-    else renderServiceOrders();
+
+    const budget = budgets[0];
+    const existingOrder = state.serviceOrders.find((order) => order.budget_id === budget.id);
+    if (existingOrder) {
+      openServiceOrderModal(existingOrder.id);
+      return;
+    }
+
+    state.crmSelectedBudgets = [budget.id];
+    state.crmEdit = null;
+    state.crmOrderDraft = buildServiceOrderDraftFromBudget(budget);
+    state.modal = renderServiceOrderModal(state.crmOrderDraft);
+    clearNotice();
+    render();
+  }
+
+  function syncServiceOrderBudgetFields(select) {
+    const budget = state.budgets.find((item) => item.id === select?.value);
+    if (!budget) return;
+    const editing = crmEditRecord("service_orders");
+    const base = editing || state.crmOrderDraft || {};
+    const draft = buildServiceOrderDraftFromBudget(budget, base);
+    if (editing) {
+      state.modal = renderServiceOrderModal({ ...draft, id: editing.id });
+    } else {
+      state.crmOrderDraft = draft;
+      state.modal = renderServiceOrderModal(state.crmOrderDraft);
+    }
+    clearNotice();
+    render();
   }
 
   async function generateRecurringOrders(id = "") {
@@ -5093,6 +5708,7 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
       setNotice("success", successMessage, { route: noticeRoute });
       state.crmEdit = null;
       state.modal = null;
+      if (table === "service_orders") state.crmOrderDraft = null;
       state.crmLoaded = false;
       try {
         await loadAdminData({ force: true });
@@ -5145,6 +5761,8 @@ export function createCrmModule({ state, getSupabase, isLoggedIn, setNotice, cle
     renderTimeEntries,
     selectBudget,
     selectAllVisibleBudgets,
+    syncServiceOrderBudgetFields,
+    syncServiceOrderItemTotals,
     selectOrder,
     selectAllVisibleOrders,
     syncBudgetContactOptions,

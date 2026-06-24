@@ -2,6 +2,8 @@ export const CASES_URL = "./data/cases.json";
 export const STORAGE_KEY = "raksa-admin-cases-v2";
 export const LEGACY_STORAGE_KEYS = ["raksa-admin-cases-v1"];
 export const ADMINS_TABLE = "admin_users";
+export const USER_PROFILES_TABLE = "profiles";
+export const ACTIVITY_LOGS_TABLE = "activity_logs";
 export const CASES_TABLE = "cases";
 export const IMAGE_BUCKET = "case-images";
 export const PAGE_BASE = "/raksadesign";
@@ -20,12 +22,53 @@ export const PRODUCT_COLUMNS = "id, name, category, description, base_price, est
 export const SUBSTRATE_COLUMNS = "id, name, kind, acquisition_type, unit, cost_unit, unit_cost, cost_amount, pass_through_method, fixed_pass_through_amount, pass_through_percent, allocation_quantity, notes, status, created_at, updated_at";
 export const PRODUCT_SUBSTRATE_COLUMNS = "id, product_id, substrate_id, quantity, is_required, notes, created_at, updated_at";
 export const BUDGET_COLUMNS = "id, budget_number, client_id, contact_id, project_id, title, status, currency, subtotal, discount, tax, total, quantity, pricing_snapshot, hourly_rate_snapshot, markup_percent_snapshot, tax_percent_snapshot, labor_hours_snapshot, labor_cost_snapshot, substrate_cost_snapshot, subtotal_snapshot, markup_amount_snapshot, tax_amount_snapshot, total_snapshot, valid_until, resolved, created_by, created_by_email, payload, created_at, updated_at";
-export const SERVICE_ORDER_COLUMNS = "id, client_id, project_id, budget_id, title, status, scope, starts_at, due_at, recurrence, billing_cycle, estimated_hours, hourly_rate, created_at, updated_at";
+export const SERVICE_ORDER_COLUMNS = "id, order_number, client_id, project_id, budget_id, title, status, scope, starts_at, due_at, recurrence, billing_cycle, estimated_hours, hourly_rate, created_by, created_by_email, updated_by, updated_by_email, source, origin_budget_id, confirmation_status, confirmed_at, created_at, updated_at";
+export const SERVICE_ORDER_ITEM_COLUMNS = "id, service_order_id, budget_id, budget_item_index, position, name, description, quantity, estimated_hours, unit_price, total, notes, source_item, created_at, updated_at";
 export const TIME_ENTRY_COLUMNS = "id, project_id, service_order_id, user_id, work_date, minutes, hourly_rate, description, billable, created_at, updated_at";
 export const METRIC_COLUMNS = "id, event_name, path, metadata, created_at";
 export const FINANCIAL_SETTINGS_TABLE = "financial_settings";
 export const FINANCIAL_SETTINGS_ID = "global";
 export const FINANCIAL_SETTINGS_COLUMNS = "id, hourly_rate, default_markup_percent, default_tax_percent, currency, created_at, updated_at";
+export const USER_PROFILE_COLUMNS = "id, auth_user_id, full_name, display_name, avatar_url, email, phone, whatsapp, cpf, birth_date, address, city, state, zip_code, role, department, hierarchy_level, access_level, employment_type, status, start_date, end_date, supervisor_id, weekly_hours, internal_hourly_rate, monthly_cost, productive_hours_goal, internal_notes, preferences, created_at, created_by, updated_at, updated_by, last_login_at";
+export const ACTIVITY_LOG_COLUMNS = "id, user_id, action, module, entity_type, entity_id, description, old_value, new_value, ip_address, user_agent, created_at";
+
+export const SUPER_ADMIN_EMAILS = ["davidraksa@live.com", "omateusosos@gmail.com"];
+export const HIERARCHY_LEVELS = {
+  viewer: 10,
+  designer: 20,
+  production: 30,
+  commercial: 40,
+  finance: 50,
+  manager: 70,
+  admin: 90,
+  super_admin: 100,
+};
+
+export const USER_ROLES = [
+  ["super_admin", "Super admin"],
+  ["admin", "Admin"],
+  ["manager", "Gestor"],
+  ["finance", "Financeiro"],
+  ["commercial", "Comercial"],
+  ["production", "Produção"],
+  ["designer", "Design"],
+  ["viewer", "Visualização"],
+];
+
+export const USER_STATUSES = [
+  ["active", "Ativo"],
+  ["inactive", "Inativo"],
+  ["suspended", "Suspenso"],
+  ["pending", "Pendente"],
+];
+
+export const EMPLOYMENT_TYPES = [
+  ["employee", "CLT"],
+  ["contractor", "Prestador"],
+  ["partner", "Sócio"],
+  ["intern", "Estágio"],
+  ["freelancer", "Freelancer"],
+];
 
 export const ADMIN_SECTIONS = [
   ["home", "Dashboard"],
@@ -118,6 +161,7 @@ export const CRM_STATE_KEYS = {
   substrates: "substrates",
   budgets: "budgets",
   service_orders: "serviceOrders",
+  service_order_items: "serviceOrderItems",
   time_entries: "timeEntries",
 };
 

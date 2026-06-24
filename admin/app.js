@@ -1,10 +1,22 @@
-import { createCrmModule } from "./modules/crm.js?v=28";
+import { createCrmModule } from "./modules/crm.js?v=32";
 import { createMetricsModule } from "./modules/metrics.js?v=3";
-import { createApiModule } from "./modules/api.js?v=13";
-import { createShellModule } from "./modules/shell.js?v=11";
+import { createApiModule } from "./modules/api.js?v=19";
+import { createShellModule } from "./modules/shell.js?v=14";
 import { createFinancialModule } from "./modules/financial.js?v=2";
 import { createCasesModule } from "./modules/cases.js?v=6";
+import { createProfileModule } from "./modules/profile.js?v=1";
+import { createUsersModule } from "./modules/users.js?v=2";
 import { formatPhone, formatCPF_CNPJ, formatCEP } from "./modules/utils.js?v=3";
+import {
+  canAccessSettings,
+  canCreateUser,
+  canDeactivateUser,
+  canEditUser,
+  canManageUsers,
+  getCurrentUserProfile as getCurrentUserProfileFromState,
+  isAdminOrAbove,
+  isSuperAdmin,
+} from "./modules/permissions.js?v=2";
 
 const app = document.querySelector("#app");
 const supabaseConfig = window.RAKSA_SUPABASE || {};
@@ -42,6 +54,7 @@ const state = {
   crmSubstrateStatus: "all",
   crmReportFilters: {},
   crmPdfExport: null,
+  crmOrderDraft: null,
   clients: [],
   contacts: [],
   projects: [],
@@ -50,13 +63,22 @@ const state = {
   substrates: [],
   budgets: [],
   serviceOrders: [],
+  serviceOrderItems: [],
   timeEntries: [],
   metricsEvents: [],
+  currentUserProfile: null,
   financialSettings: null,
   financialSettingsLoaded: false,
   financialSettingsLoading: false,
   financialSettingsLoadError: "",
   financialSettingsSaving: false,
+  userProfiles: [],
+  userProfilesLoaded: false,
+  userProfilesLoading: false,
+  userProfileSaving: false,
+  activityLogs: [],
+  activityLogsLoaded: false,
+  activityLogsLoading: false,
 };
 
 function isLoggedIn() {
@@ -69,6 +91,7 @@ let noticeSequence = 0;
 function currentRouteSection() {
   const [section, slug] = window.location.hash.replace(/^#\/?/, "").split("/");
   if (section === "crm" && slug) return `crm/${slug}`;
+  if (section === "profile" && slug) return `profile/${slug}`;
   return section || "home";
 }
 
@@ -144,16 +167,26 @@ const {
   deleteRemoteCase,
   deleteUploadedFileIfUnused,
   fileExtension,
+  getCurrentUserProfile,
   isAdminUser,
   isManagedUpload,
   loadAdminData,
   loadCases,
   loadFinancialSettings,
   loadSession,
+  loadActivityLogs,
+  loadUserProfiles,
+  logActivity,
   persistCase,
   persistCases,
   saveFinancialSettings,
+  saveOwnPreferences,
+  saveOwnProfile,
+  createUserProfile,
+  saveUserProfile,
   seedCasesIfEmpty,
+  setUserProfileStatus,
+  updateCurrentUserPassword,
 } = createApiModule({
   state,
   supabaseConfig,
@@ -165,6 +198,16 @@ const { renderComingSoon, renderLogin, renderShell } = createShellModule({
   app,
   state,
   getSupabase: () => supabase,
+  permissions: {
+    canAccessSettings,
+    canCreateUser,
+    canDeactivateUser,
+    canEditUser,
+    canManageUsers,
+    getCurrentUserProfile: getCurrentUserProfileFromState,
+    isAdminOrAbove,
+    isSuperAdmin,
+  },
 });
 
 function render() {
@@ -185,7 +228,21 @@ function render() {
   if (section === "cases" && slug) renderEditor(decodeURIComponent(slug).normalize("NFC"));
   else if (section === "home") renderAdminDashboard();
   else if (section === "site-home") renderHomeSettings();
-  else if (section === "financeiro") renderFinancePage();
+  else if (section === "financeiro") {
+    if (canAccessSettings(state)) renderFinancePage();
+    else {
+      setNotice("error", "Você não tem permissão para acessar Configurações.");
+      window.location.replace("#/home");
+    }
+  }
+  else if (section === "users") {
+    if (canManageUsers(state)) renderUsersPage();
+    else {
+      setNotice("error", "Permissão insuficiente para acessar Usuários.");
+      window.location.replace("#/home");
+    }
+  }
+  else if (section === "profile") renderProfilePage();
   else if (section === "crm" && !slug) window.location.replace("#/crm/clients");
   else if (section === "crm") renderCrmPage(slug);
   else if (section === "clients") window.location.replace("#/crm/clients");
@@ -286,6 +343,8 @@ const {
   updateBudgetItemsEstimate,
   updateBudgetFilters,
   updateBudgetReportFilter,
+  syncServiceOrderBudgetFields,
+  syncServiceOrderItemTotals,
   updateOrderFilters,
   updateProductFilters,
   updateSubstrateFilters,
@@ -311,6 +370,52 @@ const { renderFinancePage, submitFinancialSettings } = createFinancialModule({
   setNotice,
   loadFinancialSettings,
   saveFinancialSettings,
+});
+
+const {
+  editProfileModal,
+  passwordModal,
+  refreshActivity,
+  renderProfilePage,
+  signOut,
+  submitPasswordForm,
+  submitPreferencesForm,
+  submitProfileForm,
+} = createProfileModule({
+  state,
+  render,
+  renderShell,
+  setNotice,
+  getCurrentUserProfile,
+  loadActivityLogs,
+  logActivity,
+  saveOwnProfile,
+  saveOwnPreferences,
+  updateCurrentUserPassword,
+  getSupabase: () => supabase,
+});
+
+const {
+  changeUserStatus,
+  openUserDetails,
+  openUserModal,
+  renderUsersPage,
+  submitUserForm,
+} = createUsersModule({
+  state,
+  render,
+  renderShell,
+  setNotice,
+  loadUserProfiles,
+  createUserProfile,
+  saveUserProfile,
+  setUserProfileStatus,
+  permissions: {
+    canCreateUser,
+    canDeactivateUser,
+    canEditUser,
+    canManageUsers,
+  },
 });
 
 function productPreviewNumber(value = 0) {
@@ -373,9 +478,17 @@ document.addEventListener("submit", async (event) => {
   const budgetForm = event.target.closest("[data-budget-form]");
   const orderForm = event.target.closest("[data-order-form]");
   const timeForm = event.target.closest("[data-time-form]");
-  if (!form && !financialForm && !clientForm && !contactForm && !projectForm && !productForm && !substrateForm && !budgetForm && !orderForm && !timeForm) return;
+  const userForm = event.target.closest("[data-user-form]");
+  const profileForm = event.target.closest("[data-profile-form]");
+  const profilePreferencesForm = event.target.closest("[data-profile-preferences-form]");
+  const profilePasswordForm = event.target.closest("[data-profile-password-form]");
+  if (!form && !financialForm && !clientForm && !contactForm && !projectForm && !productForm && !substrateForm && !budgetForm && !orderForm && !timeForm && !userForm && !profileForm && !profilePreferencesForm && !profilePasswordForm) return;
   event.preventDefault();
 
+  if (profileForm) return submitProfileForm(profileForm);
+  if (profilePreferencesForm) return submitPreferencesForm(profilePreferencesForm);
+  if (profilePasswordForm) return submitPasswordForm(profilePasswordForm);
+  if (userForm) return submitUserForm(userForm);
   if (financialForm) return submitFinancialSettings(financialForm);
   if (clientForm) return createClient(clientForm);
   if (contactForm) return createContact(contactForm);
@@ -419,6 +532,8 @@ document.addEventListener("submit", async (event) => {
       return;
     }
 
+    await getCurrentUserProfile({ touchLastLogin: true });
+    await logActivity("fez login", "auth", "auth_user", authData.session?.user?.id || "", "Entrou na plataforma RAKSA.", null, null);
     await seedCasesIfEmpty();
     await loadAdminData({ force: true });
   } catch (error) {
@@ -521,10 +636,7 @@ document.addEventListener("click", async (event) => {
   if (!target) return;
 
   if (target.matches("[data-logout]")) {
-    if (supabase) await supabase.auth.signOut();
-    state.session = null;
-    window.location.hash = "#/";
-    render();
+    await signOut();
   }
 
   if (target.matches("[data-create-case]")) await createCase();
@@ -570,6 +682,17 @@ document.addEventListener("click", async (event) => {
   if (target.matches("[data-open-order-modal]")) openServiceOrderModal(target.dataset.openOrderModal || "");
   if (target.matches("[data-open-product-modal]")) openProductModal(target.dataset.openProductModal || "");
   if (target.matches("[data-open-substrate-modal]")) openSubstrateModal(target.dataset.openSubstrateModal || "");
+  if (target.matches("[data-profile-edit]")) editProfileModal();
+  if (target.matches("[data-profile-password]")) passwordModal();
+  if (target.matches("[data-profile-refresh-activity]")) await refreshActivity();
+  if (target.matches("[data-open-user-modal]")) openUserModal();
+  if (target.matches("[data-view-user]")) openUserDetails(target.dataset.viewUser || "");
+  if (target.matches("[data-edit-user]")) openUserModal(target.dataset.editUser || "", "edit");
+  if (target.matches("[data-permissions-user]")) openUserModal(target.dataset.permissionsUser || "", "permissions");
+  if (target.matches("[data-user-status]")) {
+    const [id, status] = target.dataset.userStatus.split(":");
+    await changeUserStatus(id, status);
+  }
   if (target.matches("[data-add-product-substrate]")) {
     const form = target.closest("[data-product-form]");
     const list = form?.querySelector("[data-product-substrate-list]");
@@ -605,6 +728,7 @@ document.addEventListener("click", async (event) => {
     state.modal = null;
     state.crmEdit = null;
     state.crmPdfExport = null;
+    state.crmOrderDraft = null;
     render();
   }
   if (target.matches("[data-confirm-delete]")) await deleteCase(target.dataset.confirmDelete);
@@ -675,6 +799,18 @@ document.addEventListener("change", async (event) => {
   const orderStatus = event.target.closest("[data-order-status-filter]");
   if (orderStatus) {
     updateOrderFilters({ status: orderStatus.value });
+    return;
+  }
+
+  const orderBudgetSelect = event.target.closest("[data-order-budget-select]");
+  if (orderBudgetSelect) {
+    syncServiceOrderBudgetFields(orderBudgetSelect);
+    return;
+  }
+
+  const orderItemInclude = event.target.closest("[data-order-item-include]");
+  if (orderItemInclude) {
+    syncServiceOrderItemTotals(orderItemInclude.closest("[data-order-form]"));
     return;
   }
 
@@ -828,5 +964,6 @@ window.addEventListener("hashchange", () => {
 
 await loadCases();
 await loadSession();
+if (state.session) await getCurrentUserProfile({ touchLastLogin: true });
 await loadAdminData();
 render();
